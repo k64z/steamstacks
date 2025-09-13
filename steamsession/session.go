@@ -2,15 +2,22 @@ package steamsession
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/k64z/steamstacks/protocol"
 	"github.com/k64z/steamstacks/steamapi"
 	"github.com/k64z/steamstacks/steamid"
 	"google.golang.org/protobuf/proto"
+)
+
+var (
+	ErrEmptyAccountName = errors.New("account name cannot be empty")
+	ErrEmptyPassword    = errors.New("password cannot be empty")
 )
 
 type Session struct {
@@ -35,18 +42,26 @@ type Session struct {
 	pollingInterval  time.Duration
 }
 
-func New(accountName, password string) *Session {
+func New(accountName, password string) (*Session, error) {
+	if strings.TrimSpace(accountName) == "" {
+		return nil, ErrEmptyAccountName
+	}
+
+	if strings.TrimSpace(password) == "" {
+		return nil, ErrEmptyPassword
+	}
+
 	s := &Session{
 		accountName:  accountName,
 		password:     password,
 		httpClient:   http.DefaultClient,
 		platformType: protocol.EAuthTokenPlatformType_k_EAuthTokenPlatformType_WebBrowser,
-		language:     0,
+		language:     DefaultLanguageCode,
 	}
 
 	s.SetHeaders()
 
-	return s
+	return s, nil
 }
 
 // StartWithCredentials
