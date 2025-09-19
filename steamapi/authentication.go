@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"mime/multipart"
 	"net/http"
+	"reflect"
 	"strconv"
 
 	"github.com/k64z/rq"
@@ -36,6 +37,7 @@ func GetPasswordRSAPublicKey(ctx context.Context, accountName string) (*RSAPubli
 		URL("https://api.steampowered.com/IAuthenticationService/GetPasswordRSAPublicKey/v1").
 		QueryParam("origin", "https://steamcommunity.com").
 		QueryParam("input_protobuf_encoded", payload).
+		Validate(rq.Validate.Header("X-Eresult", "1")).
 		DoContext(ctx)
 
 	result, err := decodeProto(resp, &protocol.CAuthentication_GetPasswordRSAPublicKey_Response{})
@@ -106,29 +108,21 @@ func BeginAuthSessionViaCredentials(
 		return nil, errors.New("invalid request")
 	}
 
-	payload, err := encodeProto(req)
+	bodyBytes, contentType, err := buildProtobufPOSTBody(req)
 	if err != nil {
-		return nil, fmt.Errorf("encode proto: %w", err)
-	}
-
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-
-	err = w.WriteField("input_protobuf_encoded", payload)
-	if err != nil {
-		return nil, fmt.Errorf("write field: %w", err)
-	}
-
-	err = w.Close()
-	if err != nil {
-		return nil, fmt.Errorf("close writer: %w", err)
+		return nil, fmt.Errorf("build body: %w", err)
 	}
 
 	resp := rq.New().
 		URL("https://api.steampowered.com/IAuthenticationService/BeginAuthSessionViaCredentials/v1").
 		Method(http.MethodPost).
-		BodyBytes(buf.Bytes()).
-		Header("Content-Type", w.FormDataContentType()).
+		BodyBytes(bodyBytes).
+		Header("Content-Type", contentType).
+		Validate(
+			rq.Validate.StatusCode(http.StatusOK),
+			rq.Validate.Header("X-Eresult", "1"),
+			rq.Validate.Header("Content-Type", "application/octet-stream"),
+		).
 		DoContext(ctx)
 
 	result, err := decodeProto(resp, &protocol.CAuthentication_BeginAuthSessionViaCredentials_Response{})
@@ -139,7 +133,87 @@ func BeginAuthSessionViaCredentials(
 	return result, nil
 }
 
-// Encodes protobuf messages to base64
+// UpdateAuthSessionWithSteamGuardCode approves an authentication session via steam guard code
+func UpdateAuthSessionWithSteamGuardCode(
+	ctx context.Context,
+	req *protocol.CAuthentication_UpdateAuthSessionWithSteamGuardCode_Request,
+) error {
+	if req == nil {
+		return errors.New("invalid request")
+	}
+
+	bodyBytes, contentType, err := buildProtobufPOSTBody(req)
+	if err != nil {
+		return fmt.Errorf("build body: %w", err)
+	}
+
+	rq.New().
+		URL("https://api.steampowered.com/IAuthenticationService/UpdateAuthSessionWithSteamGuardCode/v1").
+		Method(http.MethodPost).
+		BodyBytes(bodyBytes).
+		Header("Content-Type", contentType).
+		Validate(rq.Validate.Header("X-Eresult", "1")).
+		DoContext(ctx)
+
+	return nil
+}
+
+func PollAuthSessionStatus(
+	ctx context.Context,
+	req *protocol.CAuthentication_PollAuthSessionStatus_Request,
+) (*protocol.CAuthentication_PollAuthSessionStatus_Response, error) {
+	if req == nil {
+		return nil, errors.New("invalid request")
+	}
+
+	bodyBytes, contentType, err := buildProtobufPOSTBody(req)
+	if err != nil {
+		return nil, fmt.Errorf("build body: %w", err)
+	}
+
+	resp := rq.New().
+		URL("https://api.steampowered.com/IAuthenticationService/PollAuthSessionStatus/v1").
+		Method(http.MethodPost).
+		BodyBytes(bodyBytes).
+		Header("Content-Type", contentType).
+		Validate(rq.Validate.Header("X-Eresult", "1")).
+		DoContext(ctx)
+
+	result, err := decodeProto(resp, &protocol.CAuthentication_PollAuthSessionStatus_Response{})
+	if err != nil {
+		return nil, err
+	}
+
+	debugProto(result)
+
+	return result, nil
+}
+
+// buildProtobufPOSTBody builds POST request body compatible with SteamAPI
+func buildProtobufPOSTBody(msg proto.Message) (body []byte, contentType string, err error) {
+	// TODO:; I think we can return io.Reader instead of []byte
+	payload, err := encodeProto(msg)
+	if err != nil {
+		return nil, "", fmt.Errorf("encode proto: %w", err)
+	}
+
+	buf := new(bytes.Buffer)
+	w := multipart.NewWriter(buf)
+
+	err = w.WriteField("input_protobuf_encoded", payload)
+	if err != nil {
+		return nil, "", fmt.Errorf("write field: %w", err)
+	}
+
+	err = w.Close()
+	if err != nil {
+		return nil, "", fmt.Errorf("close writer: %w", err)
+	}
+
+	return buf.Bytes(), w.FormDataContentType(), nil
+}
+
+// encodeProto encodes protobuf messages to base64
 func encodeProto(msg proto.Message) (string, error) {
 	data, err := proto.Marshal(msg)
 	if err != nil {
@@ -148,7 +222,7 @@ func encodeProto(msg proto.Message) (string, error) {
 	return base64.StdEncoding.EncodeToString(data), nil
 }
 
-// Decodes HTTP responses to protobuf messages
+// decodeProto decodes HTTP responses to protobuf messages
 func decodeProto[T proto.Message](resp *rq.Response, msg T) (T, error) {
 	if resp.Error() != nil {
 		return msg, fmt.Errorf("rq: %w", resp.Error())
@@ -169,4 +243,48 @@ func decodeProto[T proto.Message](resp *rq.Response, msg T) (T, error) {
 	}
 
 	return msg, nil
+}
+
+// debugProto prints all fields and their values in a proto message
+func debugProto(msg proto.Message) {
+	v := reflect.ValueOf(msg)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+
+	fmt.Printf("=== %s ===\n", v.Type().Name())
+
+	t := v.Type()
+	for i := range v.NumField() {
+		field := t.Field(i)
+		value := v.Field(i)
+
+		// Skip unexported/internal fields like sizeCache, unknownFields, etc.
+		if !value.CanInterface() {
+			continue
+		}
+
+		fmt.Printf("  %-20s: ", field.Name)
+
+		if value.Kind() == reflect.Ptr {
+			if value.IsNil() {
+				fmt.Println("<nil>")
+				continue
+			}
+			fmt.Println(value.Elem())
+			continue
+		}
+
+		if value.Kind() == reflect.Slice {
+			if value.IsNil() {
+				fmt.Println("<nil>")
+			} else {
+				fmt.Printf("%v\n", value.Interface())
+			}
+			continue
+		}
+
+		fmt.Printf("%v\n", value.Interface())
+	}
+	fmt.Println()
 }
