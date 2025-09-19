@@ -185,7 +185,6 @@ func (s *Session) PollAuthSessionStatus(ctx context.Context) error {
 			case <-time.After(s.pollingInterval):
 			}
 		} else {
-			log.Println("polling OK")
 			if resp.AccessToken == nil {
 				return errors.New("access token is nil")
 			}

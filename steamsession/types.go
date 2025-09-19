@@ -23,6 +23,6 @@ const (
 type Persistence int32
 
 const (
-	PersistenceEphemereal Persistence = iota
+	PersistenceEphemeral Persistence = iota
 	PersistencePersistent
 )
