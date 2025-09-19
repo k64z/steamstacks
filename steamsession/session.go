@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -16,73 +16,95 @@ import (
 )
 
 var (
-	ErrEmptyAccountName = errors.New("account name cannot be empty")
-	ErrEmptyPassword    = errors.New("password cannot be empty")
+	ErrEmptyUsername = errors.New("account name cannot be empty")
+	ErrEmptyPassword = errors.New("password cannot be empty")
 )
 
 type Session struct {
-	accountName string
-	password    string
-	steamID     steamid.SteamID
+	AccessToken  string
+	RefreshToken string
 
-	accessToken  string
-	refreshToken string
-	clientID     uint64
-	requestID    []byte
+	steamID   steamid.SteamID
+	weakToken string // INFO: short-lived handle required to finalize the Steam web login flow
+	sessionID string
+	clientID  uint64 // INFO: something like '3737697558462176538'. Used for SteamGuard and polling
+	requestID []byte // INFO: 128 bit blob. Looks like only used for polling
 
-	httpClient *http.Client
+	platformType protocol.EAuthTokenPlatformType
+	persistence  protocol.ESessionPersistence
+	websiteID    string // NOTE: PlatformTypeWebBrowser only
+	userAgent    string // NOTE: PlatformTypeMobileApp doesn't use it
+	language     uint32 // TODO: figure out what codes are these
 
-	platformType  protocol.EAuthTokenPlatformType
-	defaultHeader http.Header
-	websiteID     string // NOTE: PlatformTypeWebBrowser only
-	userAgent     string // NOTE: PlatformTypeMobileApp doesn't use it
-	language      uint32 // TODO: figure out what codes are these
-
-	pollingStartTime time.Time
-	pollingInterval  time.Duration
+	pollingInterval time.Duration // INFO: returned by 'BeginAuthSession...', usually 5 seconds
 }
 
-func New(accountName, password string) (*Session, error) {
-	if strings.TrimSpace(accountName) == "" {
-		return nil, ErrEmptyAccountName
+func New(opts ...Option) *Session {
+	session := &Session{
+		platformType: protocol.EAuthTokenPlatformType_k_EAuthTokenPlatformType_WebBrowser,
+		persistence:  protocol.ESessionPersistence_k_ESessionPersistence_Persistent,
+		language:     DefaultLanguageCode,
+	}
+
+	session.SetHeaders()
+
+	for _, opt := range opts {
+		opt(session)
+	}
+
+	return session
+}
+
+// LoginWithDeviceCode is a convenience method that performs the most common workflow
+func (s *Session) LoginWithDeviceCode(ctx context.Context, username, password, code string) error {
+	guardTypes, err := s.StartWithCredentials(ctx, username, password)
+	if err != nil {
+		return fmt.Errorf("start with credentials: %w", err)
+	}
+
+	if !slices.Contains(guardTypes, EAuthSessionGuardTypeDeviceCode) {
+		return errors.New("device code authentication is not allowed")
+	}
+
+	err = s.SubmitSteamGuardCode(ctx, code, EAuthSessionGuardTypeDeviceCode)
+	if err != nil {
+		return fmt.Errorf("submit steam guard code: %w", err)
+	}
+
+	err = s.PollAuthSessionStatus(ctx)
+	if err != nil {
+		return fmt.Errorf("poll auth session status: %w", err)
+	}
+
+	return nil
+}
+
+// StartWithCredentials
+func (s *Session) StartWithCredentials(ctx context.Context, username, password string) ([]EAuthSessionGuardType, error) {
+	if strings.TrimSpace(username) == "" {
+		return nil, ErrEmptyUsername
 	}
 
 	if strings.TrimSpace(password) == "" {
 		return nil, ErrEmptyPassword
 	}
-
-	s := &Session{
-		accountName:  accountName,
-		password:     password,
-		httpClient:   http.DefaultClient,
-		platformType: protocol.EAuthTokenPlatformType_k_EAuthTokenPlatformType_WebBrowser,
-		language:     DefaultLanguageCode,
-	}
-
-	s.SetHeaders()
-
-	return s, nil
-}
-
-// StartWithCredentials
-func (s *Session) StartWithCredentials(ctx context.Context) error {
 	log.Println("starting authentication session...")
-	rsaKey, err := steamapi.GetPasswordRSAPublicKey(ctx, s.accountName)
+	rsaKey, err := steamapi.GetPasswordRSAPublicKey(ctx, username)
 	if err != nil {
-		return fmt.Errorf("get RSA public key: %w", err)
+		return nil, fmt.Errorf("get RSA public key: %w", err)
 	}
 
-	encryptedPassword, err := encryptPassword(s.password, rsaKey.Mod, rsaKey.Exp)
+	encryptedPassword, err := encryptPassword(password, rsaKey.Mod, rsaKey.Exp)
 	if err != nil {
-		return fmt.Errorf("encrypt password: %w", err)
+		return nil, fmt.Errorf("encrypt password: %w", err)
 	}
 
 	req := &protocol.CAuthentication_BeginAuthSessionViaCredentials_Request{
-		AccountName:         &s.accountName,
+		AccountName:         &username,
 		EncryptedPassword:   &encryptedPassword,
 		EncryptionTimestamp: &rsaKey.Timestamp,
 		RememberLogin:       proto.Bool(true),
-		Persistence:         protocol.ESessionPersistence_k_ESessionPersistence_Persistent.Enum(),
+		Persistence:         &s.persistence,
 		WebsiteId:           &s.websiteID,
 		DeviceDetails: &protocol.CAuthentication_DeviceDetails{
 			DeviceFriendlyName: &s.userAgent,
@@ -93,12 +115,86 @@ func (s *Session) StartWithCredentials(ctx context.Context) error {
 
 	authSession, err := steamapi.BeginAuthSessionViaCredentials(ctx, req)
 	if err != nil {
-		return fmt.Errorf("begin session: %w", err)
+		return nil, fmt.Errorf("begin session: %w", err)
+	}
+
+	s.clientID = *authSession.ClientId
+	s.requestID = authSession.RequestId
+	s.pollingInterval = time.Duration(*authSession.Interval * float32(time.Second))
+	s.steamID = steamid.FromSteamID64(*authSession.Steamid)
+	s.weakToken = *authSession.WeakToken
+
+	guardTypes := []EAuthSessionGuardType{}
+	for _, conf := range authSession.AllowedConfirmations {
+		switch *conf.ConfirmationType {
+		case protocol.EAuthSessionGuardType_k_EAuthSessionGuardType_Unknown:
+			guardTypes = append(guardTypes, EAuthSessionGuardTypeUnknown)
+		case protocol.EAuthSessionGuardType_k_EAuthSessionGuardType_None:
+			guardTypes = append(guardTypes, EAuthSessionGuardTypeNone)
+		case protocol.EAuthSessionGuardType_k_EAuthSessionGuardType_EmailCode:
+			guardTypes = append(guardTypes, EAuthSessionGuardTypeEmailCode)
+		case protocol.EAuthSessionGuardType_k_EAuthSessionGuardType_DeviceCode:
+			guardTypes = append(guardTypes, EAuthSessionGuardTypeDeviceCode)
+		case protocol.EAuthSessionGuardType_k_EAuthSessionGuardType_DeviceConfirmation:
+			guardTypes = append(guardTypes, EAuthSessionGuardTypeDeviceConfirmation)
+		case protocol.EAuthSessionGuardType_k_EAuthSessionGuardType_EmailConfirmation:
+			guardTypes = append(guardTypes, EAuthSessionGuardTypeEmailConfirmation)
+		case protocol.EAuthSessionGuardType_k_EAuthSessionGuardType_MachineToken:
+			guardTypes = append(guardTypes, EAuthSessionGuardTypeMachineToken)
+		}
 	}
 
 	log.Println("authentication session started successfully")
+	return guardTypes, nil
+}
 
-	s.pollingInterval = time.Duration(*authSession.Interval * float32(time.Second))
+// SubmitSteamGuardCode approves a session with Steam Guard code
+// If this method returns no error, polling can be started
+func (s *Session) SubmitSteamGuardCode(ctx context.Context, code string, guardType EAuthSessionGuardType) error {
+	req := &protocol.CAuthentication_UpdateAuthSessionWithSteamGuardCode_Request{
+		ClientId: &s.clientID,
+		Steamid:  (*uint64)(&s.steamID),
+		Code:     &code,
+		CodeType: (*protocol.EAuthSessionGuardType)(&guardType),
+	}
+
+	err := steamapi.UpdateAuthSessionWithSteamGuardCode(ctx, req)
+	if err != nil {
+		return fmt.Errorf("update session: %w", err)
+	}
 
 	return nil
+}
+
+func (s *Session) PollAuthSessionStatus(ctx context.Context) error {
+	req := &protocol.CAuthentication_PollAuthSessionStatus_Request{
+		ClientId:  &s.clientID,
+		RequestId: s.requestID,
+	}
+
+	for {
+		log.Println("polling")
+
+		resp, err := steamapi.PollAuthSessionStatus(ctx, req)
+		if err != nil {
+			log.Printf("error polling session: %v", err)
+			select {
+			case <-ctx.Done():
+				log.Println("polling cancelled")
+				return ctx.Err()
+			case <-time.After(s.pollingInterval):
+			}
+		} else {
+			log.Println("polling OK")
+			if resp.AccessToken == nil {
+				return errors.New("access token is nil")
+			}
+			if resp.RefreshToken == nil {
+				return errors.New("refresh token is nil")
+			}
+			s.AccessToken = *resp.AccessToken
+			s.RefreshToken = *resp.RefreshToken
+			return nil
+		}
+	}
 }
