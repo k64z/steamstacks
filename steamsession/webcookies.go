@@ -143,23 +143,6 @@ func (s *Session) submitTransferInfo(ctx context.Context, jar *cookiejar.Jar, tr
 	}
 
 	return nil
-
-	// resp := rq.New().
-	// 	URL(transferInfo.URL).
-	// 	Method(http.MethodPost).
-	// 	Header("Content-Type", w.FormDataContentType()).
-	// 	BodyBytes(buf.Bytes()).
-	// 	Cookies(&http.Cookie{Name: "sessionid", Value: s.sessionID}).
-	// 	Validate(rq.Validate.StatusCode(http.StatusOK)).
-	// 	Use(rq.DumpMiddleware(log.Default())).
-	// 	DoContext(ctx)
-	// if resp.Error() != nil {
-	// 	return nil, fmt.Errorf("rq: %w", resp.Error())
-	// }
-	//
-	// // TODO: validate cookies
-	//
-	// return resp.Cookies(), nil
 }
 
 // mustGenerateSessionID generates a session ID.
