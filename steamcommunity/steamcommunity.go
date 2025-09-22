@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/k64z/steamstacks/steamid"
 )
@@ -48,7 +47,7 @@ func New(opts ...Option) (*Community, error) {
 	if cfg.httpClient != nil {
 		c.httpClient = cfg.httpClient
 	} else {
-		c.httpClient = &http.Client{Timeout: 30 * time.Second}
+		c.httpClient = http.DefaultClient
 	}
 
 	var err error
