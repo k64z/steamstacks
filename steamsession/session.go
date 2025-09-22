@@ -2,9 +2,12 @@ package steamsession
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -196,4 +199,65 @@ func (s *Session) PollAuthSessionStatus(ctx context.Context) error {
 			return nil
 		}
 	}
+}
+
+type PersistentSession struct {
+	RefreshToken string          `json:"refresh_token"`
+	SteamID      steamid.SteamID `json:"steam_id"`
+}
+
+func (s *Session) SaveToFile(filePath string) error {
+	if s.RefreshToken == "" {
+		return errors.New("no refresh token to save")
+	}
+
+	data := PersistentSession{
+		RefreshToken: s.RefreshToken,
+		SteamID:      s.steamID,
+	}
+
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshal session data: %w", err)
+	}
+
+	dir := filepath.Dir(filePath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
+
+	if err := os.WriteFile(filePath, jsonData, 0600); err != nil {
+		return fmt.Errorf("write session file: %w", err)
+	}
+
+	log.Printf("Session saved to %s", filePath)
+	return nil
+}
+
+func (s *Session) LoadFromFile(filePath string) error {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return errors.New("session file does not exist")
+		}
+		return fmt.Errorf("read session file: %w", err)
+	}
+
+	var persistentSession PersistentSession
+	if err := json.Unmarshal(data, &persistentSession); err != nil {
+		return fmt.Errorf("unmarshal session data: %w", err)
+	}
+
+	s.RefreshToken = persistentSession.RefreshToken
+	s.steamID = persistentSession.SteamID
+
+	log.Printf("Session loaded from %s", filePath)
+	return nil
+}
+
+func (s *Session) IsValidToken(ctx context.Context) bool {
+	return s.RefreshToken != ""
+
+	// _, err := s.GetWebCookies(ctx)
+	// return err == nil
 }
