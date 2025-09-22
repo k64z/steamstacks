@@ -12,7 +12,6 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
-	"net/http/cookiejar"
 	"net/url"
 	"strconv"
 
@@ -32,27 +31,27 @@ type TransferInfo struct {
 	} `json:"params"`
 }
 
-func (s *Session) GetWebCookies(ctx context.Context) (*cookiejar.Jar, error) {
+func (s *Session) GetWebCookies(ctx context.Context) error {
 	if s.RefreshToken == "" {
-		return nil, errors.New("refresh token is required")
+		return errors.New("refresh token is required")
 	}
 
 	s.sessionID = mustGenerateSessionID()
 
 	if s.platformType == PlatformTypeSteamClient || s.platformType == PlatformTypeMobileApp {
 		// TODO: SteamClient's and MobileApp's steamLoginSecure is s.AccessToken
-		return nil, nil
+		return nil
 	}
 
-	jar, err := s.FinalizeLogin(ctx)
+	err := s.FinalizeLogin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("finalize login: %w", err)
+		return fmt.Errorf("finalize login: %w", err)
 	}
 
-	return jar, nil
+	return nil
 }
 
-func (s *Session) FinalizeLogin(ctx context.Context) (*cookiejar.Jar, error) {
+func (s *Session) FinalizeLogin(ctx context.Context) error {
 	// TODO: init cookie jar at the start
 	buf := new(bytes.Buffer)
 	w := multipart.NewWriter(buf)
@@ -66,22 +65,21 @@ func (s *Session) FinalizeLogin(ctx context.Context) (*cookiejar.Jar, error) {
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://login.steampowered.com/jwt/finalizelogin", buf)
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		return fmt.Errorf("create request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", w.FormDataContentType())
 	httpReq.Header.Set("Origin", "https://steamcommunity.com")
 	httpReq.Header.Set("Referer", "https://steamcommunity.com")
 
-	client := &http.Client{}
-	resp, err := client.Do(httpReq)
+	resp, err := s.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
+		return fmt.Errorf("do request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
 	// The response has the Set-Cookie header, which contains a single cookie.
@@ -90,32 +88,29 @@ func (s *Session) FinalizeLogin(ctx context.Context) (*cookiejar.Jar, error) {
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
+		return fmt.Errorf("read body: %w", err)
 	}
 
 	var result finalizeLoginResp
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("json: %w", err)
+		return fmt.Errorf("json: %w", err)
 	}
 
 	if len(result.TransferInfo) == 0 {
-		return nil, errors.New("invalid response: empty transfer_info")
+		return errors.New("invalid response: empty transfer_info")
 	}
 
-	jar, _ := cookiejar.New(nil)
-	jar.SetCookies(httpReq.URL, resp.Cookies())
-
 	for _, transferInfo := range result.TransferInfo {
-		err := s.submitTransferInfo(ctx, jar, *transferInfo)
+		err := s.submitTransferInfo(ctx, *transferInfo)
 		if err != nil {
-			return nil, fmt.Errorf("submit transfer info on %s: %w", transferInfo.URL, err)
+			return fmt.Errorf("submit transfer info on %s: %w", transferInfo.URL, err)
 		}
 	}
 
-	return jar, nil
+	return nil
 }
 
-func (s *Session) submitTransferInfo(ctx context.Context, jar *cookiejar.Jar, transferInfo TransferInfo) error {
+func (s *Session) submitTransferInfo(ctx context.Context, transferInfo TransferInfo) error {
 	log.Printf("Setting token on %s (%d)", transferInfo.URL, s.steamID)
 
 	u, err := url.Parse(transferInfo.URL)
@@ -123,7 +118,7 @@ func (s *Session) submitTransferInfo(ctx context.Context, jar *cookiejar.Jar, tr
 		return fmt.Errorf("parseURL: %w", err)
 	}
 
-	jar.SetCookies(u, []*http.Cookie{
+	s.httpClient.Jar.SetCookies(u, []*http.Cookie{
 		{
 			Name:     "sessionid",
 			Value:    s.sessionID,
@@ -150,8 +145,7 @@ func (s *Session) submitTransferInfo(ctx context.Context, jar *cookiejar.Jar, tr
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	// req.AddCookie(&http.Cookie{Name: "sessionid", Value: s.sessionID})
 
-	client := &http.Client{Jar: jar}
-	resp, err := client.Do(req)
+	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("do request: %w", err)
 	}

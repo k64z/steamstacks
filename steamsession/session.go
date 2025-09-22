@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
+	"net/http/cookiejar"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,6 +26,9 @@ var (
 )
 
 type Session struct {
+	httpClient *http.Client
+	steamAPI   *steamapi.API
+
 	AccessToken  string
 	RefreshToken string
 
@@ -42,20 +47,61 @@ type Session struct {
 	pollingInterval time.Duration // INFO: returned by 'BeginAuthSession...', usually 5 seconds
 }
 
-func New(opts ...Option) *Session {
-	session := &Session{
+type config struct {
+	httpClient *http.Client
+}
+
+type Option func(options *config) error
+
+func WithHTTPClient(httpClient *http.Client) Option {
+	return func(options *config) error {
+		if httpClient == nil {
+			return errors.New("httpClient should be non-nil")
+		}
+		options.httpClient = httpClient
+		return nil
+	}
+}
+
+func New(opts ...Option) (*Session, error) {
+	var cfg config
+	for _, opt := range opts {
+		err := opt(&cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	s := &Session{
 		platformType: protocol.EAuthTokenPlatformType_k_EAuthTokenPlatformType_WebBrowser,
 		persistence:  protocol.ESessionPersistence_k_ESessionPersistence_Persistent,
 		language:     DefaultLanguageCode,
 	}
 
-	session.SetHeaders()
-
-	for _, opt := range opts {
-		opt(session)
+	if cfg.httpClient != nil {
+		s.httpClient = cfg.httpClient
+	} else {
+		s.httpClient = http.DefaultClient
 	}
 
-	return session
+	// Ensure the HTTP client has a cookie jar for web authentication
+	if s.httpClient.Jar == nil {
+		jar, err := cookiejar.New(nil)
+		if err != nil {
+			return nil, fmt.Errorf("create cookie jar: %w", err)
+		}
+		s.httpClient.Jar = jar
+	}
+
+	var err error
+	s.steamAPI, err = steamapi.New(steamapi.WithHTTPClient(s.httpClient))
+	if err != nil {
+		return nil, fmt.Errorf("init SteamAPI: %w", err)
+	}
+
+	s.SetHeaders()
+
+	return s, nil
 }
 
 // LoginWithDeviceCode is a convenience method that performs the most common workflow
@@ -92,7 +138,7 @@ func (s *Session) StartWithCredentials(ctx context.Context, username, password s
 		return nil, ErrEmptyPassword
 	}
 	log.Println("starting authentication session...")
-	rsaKey, err := steamapi.GetPasswordRSAPublicKey(ctx, username)
+	rsaKey, err := s.steamAPI.GetPasswordRSAPublicKey(ctx, username)
 	if err != nil {
 		return nil, fmt.Errorf("get RSA public key: %w", err)
 	}
@@ -116,7 +162,7 @@ func (s *Session) StartWithCredentials(ctx context.Context, username, password s
 		Language: &s.language,
 	}
 
-	authSession, err := steamapi.BeginAuthSessionViaCredentials(ctx, req)
+	authSession, err := s.steamAPI.BeginAuthSessionViaCredentials(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("begin session: %w", err)
 	}
@@ -161,7 +207,7 @@ func (s *Session) SubmitSteamGuardCode(ctx context.Context, code string, guardTy
 		CodeType: (*protocol.EAuthSessionGuardType)(&guardType),
 	}
 
-	err := steamapi.UpdateAuthSessionWithSteamGuardCode(ctx, req)
+	err := s.steamAPI.UpdateAuthSessionWithSteamGuardCode(ctx, req)
 	if err != nil {
 		return fmt.Errorf("update session: %w", err)
 	}
@@ -178,7 +224,7 @@ func (s *Session) PollAuthSessionStatus(ctx context.Context) error {
 	for {
 		log.Println("polling")
 
-		resp, err := steamapi.PollAuthSessionStatus(ctx, req)
+		resp, err := s.steamAPI.PollAuthSessionStatus(ctx, req)
 		if err != nil {
 			log.Printf("error polling session: %v", err)
 			select {

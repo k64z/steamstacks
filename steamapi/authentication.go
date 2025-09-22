@@ -24,7 +24,7 @@ type RSAPublicKey struct {
 }
 
 // Fetches RSA public key to use to encrypt passwords for a given account name
-func GetPasswordRSAPublicKey(ctx context.Context, accountName string) (*RSAPublicKey, error) {
+func (a *API) GetPasswordRSAPublicKey(ctx context.Context, accountName string) (*RSAPublicKey, error) {
 	msg := &protocol.CAuthentication_GetPasswordRSAPublicKey_Request{
 		AccountName: &accountName,
 	}
@@ -44,8 +44,7 @@ func GetPasswordRSAPublicKey(ctx context.Context, accountName string) (*RSAPubli
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	client := &http.Client{}
-	resp, err := client.Do(httpReq)
+	resp, err := a.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
 	}
@@ -115,7 +114,7 @@ type BeginAuthSessionWithCredentialsRequest struct {
 // - 'Just login as if in browser'
 //
 
-func BeginAuthSessionViaCredentials(
+func (a *API) BeginAuthSessionViaCredentials(
 	ctx context.Context,
 	req *protocol.CAuthentication_BeginAuthSessionViaCredentials_Request,
 ) (*protocol.CAuthentication_BeginAuthSessionViaCredentials_Response, error) {
@@ -134,8 +133,7 @@ func BeginAuthSessionViaCredentials(
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 
-	client := &http.Client{}
-	resp, err := client.Do(httpReq)
+	resp, err := a.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
 	}
@@ -160,7 +158,7 @@ func BeginAuthSessionViaCredentials(
 }
 
 // UpdateAuthSessionWithSteamGuardCode approves an authentication session via steam guard code
-func UpdateAuthSessionWithSteamGuardCode(
+func (a *API) UpdateAuthSessionWithSteamGuardCode(
 	ctx context.Context,
 	req *protocol.CAuthentication_UpdateAuthSessionWithSteamGuardCode_Request,
 ) error {
@@ -179,8 +177,7 @@ func UpdateAuthSessionWithSteamGuardCode(
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 
-	client := &http.Client{}
-	resp, err := client.Do(httpReq)
+	resp, err := a.httpClient.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("do request: %w", err)
 	}
@@ -193,7 +190,7 @@ func UpdateAuthSessionWithSteamGuardCode(
 	return nil
 }
 
-func PollAuthSessionStatus(
+func (a *API) PollAuthSessionStatus(
 	ctx context.Context,
 	req *protocol.CAuthentication_PollAuthSessionStatus_Request,
 ) (*protocol.CAuthentication_PollAuthSessionStatus_Response, error) {
@@ -212,8 +209,7 @@ func PollAuthSessionStatus(
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 
-	client := &http.Client{}
-	resp, err := client.Do(httpReq)
+	resp, err := a.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
 	}
