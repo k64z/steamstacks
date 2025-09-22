@@ -11,7 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
-	"net/http/httputil"
+	"net/url"
 	"strconv"
 
 	"github.com/k64z/rq"
@@ -107,6 +107,22 @@ func (s *Session) FinalizeLogin(ctx context.Context) (*cookiejar.Jar, error) {
 func (s *Session) submitTransferInfo(ctx context.Context, jar *cookiejar.Jar, transferInfo TransferInfo) error {
 	log.Printf("Setting token on %s (%d)", transferInfo.URL, s.steamID)
 
+	u, err := url.Parse(transferInfo.URL)
+	if err != nil {
+		return fmt.Errorf("parseURL: %w", err)
+	}
+
+	jar.SetCookies(u, []*http.Cookie{
+		{
+			Name:     "sessionid",
+			Value:    s.sessionID,
+			SameSite: http.SameSiteNoneMode,
+			Secure:   true,
+			HttpOnly: true,
+			Path:     "/",
+		},
+	})
+
 	buf := new(bytes.Buffer)
 	w := multipart.NewWriter(buf)
 
@@ -121,11 +137,7 @@ func (s *Session) submitTransferInfo(ctx context.Context, jar *cookiejar.Jar, tr
 	}
 
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	req.AddCookie(&http.Cookie{Name: "sessionid", Value: s.sessionID})
-
-	if reqDump, err := httputil.DumpRequestOut(req, true); err == nil {
-		log.Printf("REQUEST:\n%s", reqDump)
-	}
+	// req.AddCookie(&http.Cookie{Name: "sessionid", Value: s.sessionID})
 
 	client := &http.Client{Jar: jar}
 	resp, err := client.Do(req)
@@ -133,10 +145,6 @@ func (s *Session) submitTransferInfo(ctx context.Context, jar *cookiejar.Jar, tr
 		return fmt.Errorf("do request: %w", err)
 	}
 	defer resp.Body.Close()
-
-	if respDump, err := httputil.DumpResponse(resp, true); err == nil {
-		log.Printf("RESPONSE:\n%s", respDump)
-	}
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status: %d", resp.StatusCode)
