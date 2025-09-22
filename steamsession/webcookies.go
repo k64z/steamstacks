@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -14,7 +16,6 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/k64z/rq"
 	"github.com/k64z/steamstacks/steamid"
 )
 
@@ -63,27 +64,37 @@ func (s *Session) FinalizeLogin(ctx context.Context) (*cookiejar.Jar, error) {
 
 	log.Println("RefreshToken", s.RefreshToken)
 
-	resp := rq.New().
-		URL("https://login.steampowered.com/jwt/finalizelogin").
-		Method(http.MethodPost).
-		BodyBytes(buf.Bytes()).
-		Header("Content-Type", w.FormDataContentType()).
-		Header("Origin", "https://steamcommunity.com").
-		Header("Referer", "https://steamcommunity.com").
-		Validate(rq.Validate.StatusCode(http.StatusOK)).
-		Use(rq.DumpMiddleware(log.Default())).
-		DoContext(ctx)
-	if resp.Error() != nil {
-		return nil, fmt.Errorf("rq: %w", resp.Error())
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://login.steampowered.com/jwt/finalizelogin", buf)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", w.FormDataContentType())
+	httpReq.Header.Set("Origin", "https://steamcommunity.com")
+	httpReq.Header.Set("Referer", "https://steamcommunity.com")
+
+	client := &http.Client{}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
 	// The response has the Set-Cookie header, which contains a single cookie.
 	// The cookie is "steamRefresh_steam", which is essentially `steam_id||refresh_token`
 	// I'm not sure if we actually need to keep it
 
-	var result finalizeLoginResp
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
 
-	if err := resp.JSON(&result); err != nil {
+	var result finalizeLoginResp
+	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("json: %w", err)
 	}
 
@@ -92,7 +103,7 @@ func (s *Session) FinalizeLogin(ctx context.Context) (*cookiejar.Jar, error) {
 	}
 
 	jar, _ := cookiejar.New(nil)
-	jar.SetCookies(resp.Request.URL, resp.Cookies())
+	jar.SetCookies(httpReq.URL, resp.Cookies())
 
 	for _, transferInfo := range result.TransferInfo {
 		err := s.submitTransferInfo(ctx, jar, *transferInfo)
