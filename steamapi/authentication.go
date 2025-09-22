@@ -6,12 +6,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strconv"
 
-	"github.com/k64z/rq"
 	"github.com/k64z/steamstacks/protocol"
 	"google.golang.org/protobuf/proto"
 )
@@ -33,14 +34,28 @@ func GetPasswordRSAPublicKey(ctx context.Context, accountName string) (*RSAPubli
 		return nil, err
 	}
 
-	resp := rq.New().
-		URL("https://api.steampowered.com/IAuthenticationService/GetPasswordRSAPublicKey/v1").
-		QueryParam("origin", "https://steamcommunity.com").
-		QueryParam("input_protobuf_encoded", payload).
-		Validate(rq.Validate.Header("X-Eresult", "1")).
-		DoContext(ctx)
+	apiURL := "https://api.steampowered.com/IAuthenticationService/GetPasswordRSAPublicKey/v1"
+	params := url.Values{}
+	params.Set("origin", "https://steamcommunity.com")
+	params.Set("input_protobuf_encoded", payload)
 
-	result, err := decodeProto(resp, &protocol.CAuthentication_GetPasswordRSAPublicKey_Response{})
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", apiURL+"?"+params.Encode(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.Header.Get("X-Eresult") != "1" {
+		return nil, fmt.Errorf("invalid X-Eresult header: %s", resp.Header.Get("X-Eresult"))
+	}
+
+	result, err := decodeProtoFromHTTPResponse(resp, &protocol.CAuthentication_GetPasswordRSAPublicKey_Response{})
 	if err != nil {
 		return nil, err
 	}
@@ -113,19 +128,30 @@ func BeginAuthSessionViaCredentials(
 		return nil, fmt.Errorf("build body: %w", err)
 	}
 
-	resp := rq.New().
-		URL("https://api.steampowered.com/IAuthenticationService/BeginAuthSessionViaCredentials/v1").
-		Method(http.MethodPost).
-		BodyBytes(bodyBytes).
-		Header("Content-Type", contentType).
-		Validate(
-			rq.Validate.StatusCode(http.StatusOK),
-			rq.Validate.Header("X-Eresult", "1"),
-			rq.Validate.Header("Content-Type", "application/octet-stream"),
-		).
-		DoContext(ctx)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.steampowered.com/IAuthenticationService/BeginAuthSessionViaCredentials/v1", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", contentType)
 
-	result, err := decodeProto(resp, &protocol.CAuthentication_BeginAuthSessionViaCredentials_Response{})
+	client := &http.Client{}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+	if resp.Header.Get("X-Eresult") != "1" {
+		return nil, fmt.Errorf("invalid X-Eresult header: %s", resp.Header.Get("X-Eresult"))
+	}
+	if resp.Header.Get("Content-Type") != "application/octet-stream" {
+		return nil, fmt.Errorf("unexpected content type: %s", resp.Header.Get("Content-Type"))
+	}
+
+	result, err := decodeProtoFromHTTPResponse(resp, &protocol.CAuthentication_BeginAuthSessionViaCredentials_Response{})
 	if err != nil {
 		return nil, err
 	}
@@ -147,13 +173,22 @@ func UpdateAuthSessionWithSteamGuardCode(
 		return fmt.Errorf("build body: %w", err)
 	}
 
-	rq.New().
-		URL("https://api.steampowered.com/IAuthenticationService/UpdateAuthSessionWithSteamGuardCode/v1").
-		Method(http.MethodPost).
-		BodyBytes(bodyBytes).
-		Header("Content-Type", contentType).
-		Validate(rq.Validate.Header("X-Eresult", "1")).
-		DoContext(ctx)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.steampowered.com/IAuthenticationService/UpdateAuthSessionWithSteamGuardCode/v1", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", contentType)
+
+	client := &http.Client{}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.Header.Get("X-Eresult") != "1" {
+		return fmt.Errorf("invalid X-Eresult header: %s", resp.Header.Get("X-Eresult"))
+	}
 
 	return nil
 }
@@ -171,15 +206,24 @@ func PollAuthSessionStatus(
 		return nil, fmt.Errorf("build body: %w", err)
 	}
 
-	resp := rq.New().
-		URL("https://api.steampowered.com/IAuthenticationService/PollAuthSessionStatus/v1").
-		Method(http.MethodPost).
-		BodyBytes(bodyBytes).
-		Header("Content-Type", contentType).
-		Validate(rq.Validate.Header("X-Eresult", "1")).
-		DoContext(ctx)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.steampowered.com/IAuthenticationService/PollAuthSessionStatus/v1", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", contentType)
 
-	result, err := decodeProto(resp, &protocol.CAuthentication_PollAuthSessionStatus_Response{})
+	client := &http.Client{}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.Header.Get("X-Eresult") != "1" {
+		return nil, fmt.Errorf("invalid X-Eresult header: %s", resp.Header.Get("X-Eresult"))
+	}
+
+	result, err := decodeProtoFromHTTPResponse(resp, &protocol.CAuthentication_PollAuthSessionStatus_Response{})
 	if err != nil {
 		return nil, err
 	}
@@ -222,17 +266,13 @@ func encodeProto(msg proto.Message) (string, error) {
 	return base64.StdEncoding.EncodeToString(data), nil
 }
 
-// decodeProto decodes HTTP responses to protobuf messages
-func decodeProto[T proto.Message](resp *rq.Response, msg T) (T, error) {
-	if resp.Error() != nil {
-		return msg, fmt.Errorf("rq: %w", resp.Error())
-	}
-
+// decodeProtoFromHTTPResponse decodes HTTP responses to protobuf messages
+func decodeProtoFromHTTPResponse[T proto.Message](resp *http.Response, msg T) (T, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return msg, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	bodyBytes, err := resp.Bytes()
+	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return msg, fmt.Errorf("read body: %w", err)
 	}
