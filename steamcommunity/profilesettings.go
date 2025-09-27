@@ -8,10 +8,8 @@ import (
 	"fmt"
 	"html"
 	"io"
-	"log"
 	"mime/multipart"
 	"net/http"
-	"net/http/httputil"
 	"net/textproto"
 	"net/url"
 	"regexp"
@@ -113,7 +111,8 @@ type Badge struct {
 }
 
 func (c *Community) ProfileData() (*ProfileData, error) {
-	resp, err := c.httpClient.Get("https://steamcommunity.com/my/edit/info")
+	u := fmt.Sprintf("https://steamcommunity.com/profiles/%d/edit/info", c.steamID)
+	resp, err := c.httpClient.Get(u)
 	if err != nil {
 		return nil, fmt.Errorf("get: %w", err)
 	}
@@ -229,7 +228,7 @@ func (c *Community) EditProfile(ctx context.Context, p EditProfileRequest) error
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		"https://steamcommunity.com/id/realpt002/edit/",
+		fmt.Sprintf("https://steamcommunity.com/profiles/%d/edit/info", c.steamID),
 		buf,
 	)
 	if err != nil {
@@ -237,17 +236,11 @@ func (c *Community) EditProfile(ctx context.Context, p EditProfileRequest) error
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
 
-	reqDump, _ := httputil.DumpRequestOut(req, true)
-	log.Println(string(reqDump))
-
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("do: %w", err)
 	}
 	defer resp.Body.Close()
-
-	respDump, _ := httputil.DumpResponse(resp, true)
-	log.Println(string(respDump))
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
@@ -316,17 +309,11 @@ func (c *Community) UploadAvatar(ctx context.Context, avatar io.Reader) error {
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
 
-	reqDump, _ := httputil.DumpRequestOut(req, true)
-	log.Println(string(reqDump))
-
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("do: %w", err)
 	}
 	defer resp.Body.Close()
-
-	respDump, _ := httputil.DumpResponse(resp, true)
-	log.Println(string(respDump))
 
 	var result struct {
 		Success bool `json:"success"`

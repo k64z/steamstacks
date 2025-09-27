@@ -307,3 +307,8 @@ func (s *Session) IsValidToken(ctx context.Context) bool {
 	// _, err := s.GetWebCookies(ctx)
 	// return err == nil
 }
+
+// DoRequest executes an arbitrary HTTP request using the session's httpClient
+func (s *Session) DoRequest(req *http.Request) (*http.Response, error) {
+	return s.httpClient.Do(req)
+}
