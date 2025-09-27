@@ -102,3 +102,8 @@ func extractSteamID(jar http.CookieJar) (steamid.SteamID, error) {
 
 	return steamid.SteamID(0), errors.New("missing steamLoginSecure cookie")
 }
+
+// DoRequest executes an arbitrary HTTP request using the Community's httpClient
+func (c *Community) DoRequest(req *http.Request) (*http.Response, error) {
+	return c.httpClient.Do(req)
+}

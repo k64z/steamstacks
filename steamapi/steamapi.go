@@ -44,3 +44,8 @@ func New(opts ...Option) (*API, error) {
 
 	return a, nil
 }
+
+// DoRequest executes an arbitrary HTTP request using the API's httpClient
+func (a *API) DoRequest(req *http.Request) (*http.Response, error) {
+	return a.httpClient.Do(req)
+}
