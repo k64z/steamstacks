@@ -111,7 +111,7 @@ func (s *Session) FinalizeLogin(ctx context.Context) error {
 }
 
 func (s *Session) submitTransferInfo(ctx context.Context, transferInfo TransferInfo) error {
-	log.Printf("Setting token on %s (%d)", transferInfo.URL, s.steamID)
+	log.Printf("Setting token on %s (%d)", transferInfo.URL, s.SteamID)
 
 	u, err := url.Parse(transferInfo.URL)
 	if err != nil {
@@ -134,7 +134,7 @@ func (s *Session) submitTransferInfo(ctx context.Context, transferInfo TransferI
 
 	w.WriteField("nonce", transferInfo.Params.Nonce)
 	w.WriteField("auth", transferInfo.Params.Auth)
-	w.WriteField("steamID", strconv.FormatUint(s.steamID.ToSteamID64(), 10))
+	w.WriteField("steamID", strconv.FormatUint(s.SteamID.ToSteamID64(), 10))
 	w.Close()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, transferInfo.URL, buf)

@@ -14,7 +14,7 @@ import (
 type Community struct {
 	httpClient *http.Client
 	sessionID  string
-	steamID    steamid.SteamID
+	SteamID    steamid.SteamID
 }
 
 type config struct {
@@ -56,7 +56,7 @@ func New(opts ...Option) (*Community, error) {
 		return nil, fmt.Errorf("extract sessionID: %w", err)
 	}
 
-	c.steamID, err = extractSteamID(c.httpClient.Jar)
+	c.SteamID, err = extractSteamID(c.httpClient.Jar)
 	if err != nil {
 		return nil, fmt.Errorf("extract steamID: %w", err)
 	}

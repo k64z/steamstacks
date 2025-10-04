@@ -32,7 +32,7 @@ type Session struct {
 	AccessToken  string
 	RefreshToken string
 
-	steamID   steamid.SteamID
+	SteamID   steamid.SteamID
 	weakToken string // INFO: short-lived handle required to finalize the Steam web login flow
 	sessionID string
 	clientID  uint64 // INFO: something like '3737697558462176538'. Used for SteamGuard and polling
@@ -170,7 +170,7 @@ func (s *Session) StartWithCredentials(ctx context.Context, username, password s
 	s.clientID = *authSession.ClientId
 	s.requestID = authSession.RequestId
 	s.pollingInterval = time.Duration(*authSession.Interval * float32(time.Second))
-	s.steamID = steamid.FromSteamID64(*authSession.Steamid)
+	s.SteamID = steamid.FromSteamID64(*authSession.Steamid)
 	s.weakToken = *authSession.WeakToken
 
 	guardTypes := []EAuthSessionGuardType{}
@@ -202,7 +202,7 @@ func (s *Session) StartWithCredentials(ctx context.Context, username, password s
 func (s *Session) SubmitSteamGuardCode(ctx context.Context, code string, guardType EAuthSessionGuardType) error {
 	req := &protocol.CAuthentication_UpdateAuthSessionWithSteamGuardCode_Request{
 		ClientId: &s.clientID,
-		Steamid:  (*uint64)(&s.steamID),
+		Steamid:  (*uint64)(&s.SteamID),
 		Code:     &code,
 		CodeType: (*protocol.EAuthSessionGuardType)(&guardType),
 	}
@@ -259,7 +259,7 @@ func (s *Session) SaveToFile(filePath string) error {
 
 	data := PersistentSession{
 		RefreshToken: s.RefreshToken,
-		SteamID:      s.steamID,
+		SteamID:      s.SteamID,
 	}
 
 	jsonData, err := json.Marshal(data)
@@ -295,7 +295,7 @@ func (s *Session) LoadFromFile(filePath string) error {
 	}
 
 	s.RefreshToken = persistentSession.RefreshToken
-	s.steamID = persistentSession.SteamID
+	s.SteamID = persistentSession.SteamID
 
 	log.Printf("Session loaded from %s", filePath)
 	return nil

@@ -111,7 +111,7 @@ type Badge struct {
 }
 
 func (c *Community) ProfileData() (*ProfileData, error) {
-	u := fmt.Sprintf("https://steamcommunity.com/profiles/%d/edit/info", c.steamID)
+	u := fmt.Sprintf("https://steamcommunity.com/profiles/%d/edit/info", c.SteamID)
 	resp, err := c.httpClient.Get(u)
 	if err != nil {
 		return nil, fmt.Errorf("get: %w", err)
@@ -153,7 +153,7 @@ func (c *Community) SetPrivacySettings(ctx context.Context, settings *PrivacySet
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		fmt.Sprintf("https://steamcommunity.com/profiles/%d/ajaxsetprivacy/", c.steamID),
+		fmt.Sprintf("https://steamcommunity.com/profiles/%d/ajaxsetprivacy/", c.SteamID),
 		strings.NewReader(formData.Encode()),
 	)
 	if err != nil {
@@ -228,7 +228,7 @@ func (c *Community) EditProfile(ctx context.Context, p EditProfileRequest) error
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		fmt.Sprintf("https://steamcommunity.com/profiles/%d/edit/info", c.steamID),
+		fmt.Sprintf("https://steamcommunity.com/profiles/%d/edit/info", c.SteamID),
 		buf,
 	)
 	if err != nil {
@@ -283,7 +283,7 @@ func (c *Community) UploadAvatar(ctx context.Context, avatar io.Reader) error {
 
 	fields := map[string]string{
 		"type":      "player_avatar_image",
-		"sId":       strconv.FormatUint(c.steamID.ToSteamID64(), 10),
+		"sId":       strconv.FormatUint(c.SteamID.ToSteamID64(), 10),
 		"sessionid": c.sessionID,
 		"doSub":     "1",
 		"json":      "1",
@@ -339,7 +339,7 @@ func (c *Community) ClearAliasHistory(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		fmt.Sprintf("https://steamcommunity.com/profiles/%d/ajaxclearaliashistory/", c.steamID),
+		fmt.Sprintf("https://steamcommunity.com/profiles/%d/ajaxclearaliashistory/", c.SteamID),
 		strings.NewReader(formData.Encode()),
 	)
 	if err != nil {
