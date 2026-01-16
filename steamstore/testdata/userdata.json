@@ -1,0 +1,21 @@
+{
+  "rgOwnedApps": [440, 570, 730],
+  "rgOwnedPackages": [54029, 29912],
+  "rgWishlist": [123456, 789012],
+  "rgFollowedApps": [440],
+  "rgIgnoredApps": {"999999": 0},
+  "rgIgnoredPackages": [],
+  "rgRecommendedTags": [
+    {"tagid": 19, "name": "Action"},
+    {"tagid": 21, "name": "Adventure"},
+    {"tagid": 122, "name": "RPG"}
+  ],
+  "rgRecommendedApps": [123456],
+  "rgCuratorsIgnored": [],
+  "rgCuratorsFollowed": [],
+  "rgCreatorsFollowed": [],
+  "rgCreatorsIgnored": [],
+  "rgExcludedTags": [],
+  "rgPrimaryLanguage": 0,
+  "rgSecondaryLanguages": []
+}
