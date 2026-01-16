@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Steam Checkout</title>
+</head>
+<body>
+    <form id="form_authtxn" action="https://checkout.steampowered.com/checkout/approvetxnsubmit" method="POST">
+        <input type="hidden" name="transaction_id" value="123456789012345678" />
+        <input type="hidden" name="returnurl" value="https://store.steampowered.com/buyitem/440/finalize/987654321?canceledurl=https%3A%2F%2Fstore.steampowered.com%2F&amp;returnhost=store.steampowered.com" />
+        <input type="hidden" name="sessionid" value="testsessionid123" />
+        <input type="hidden" name="approved" id="input_approved" value="0" />
+    </form>
+    <div class="approvetxn_lineitem_row">
+        <div class="approvetxn_lineitem_qty">1</div>
+        <div class="approvetxn_lineitem_price">$2.49</div>
+        <div class="approvetxn_lineitem_description">Unlocked Cosmetic Crate Multi-Class</div>
+    </div>
+</body>
+</html>
