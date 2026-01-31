@@ -1,2 +1,3 @@
 main.go
-steam_session.json
+cmd/
+steam_session*.json

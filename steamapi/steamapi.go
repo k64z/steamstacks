@@ -3,10 +3,13 @@ package steamapi
 import (
 	"errors"
 	"net/http"
+	"net/url"
+	"strings"
 )
 
 type API struct {
-	httpClient *http.Client
+	httpClient  *http.Client
+	accessToken string
 }
 
 type config struct {
@@ -42,7 +45,31 @@ func New(opts ...Option) (*API, error) {
 		a.httpClient = http.DefaultClient
 	}
 
+	// Extract access token from cookie jar (if available)
+	if a.httpClient.Jar != nil {
+		a.accessToken, _ = extractAccessToken(a.httpClient.Jar)
+	}
+
 	return a, nil
+}
+
+// extractAccessToken extracts the access token from the steamLoginSecure cookie.
+// The cookie format is "{steamid}||{access_token}" (URL encoded as "%7C%7C").
+func extractAccessToken(jar http.CookieJar) (string, error) {
+	u, _ := url.Parse("https://steamcommunity.com")
+	cookies := jar.Cookies(u)
+
+	for _, cookie := range cookies {
+		if cookie.Name == "steamLoginSecure" {
+			parts := strings.Split(cookie.Value, "%7C%7C") // URL encoded "||"
+			if len(parts) < 2 {
+				return "", errors.New("unsplittable steamLoginSecure cookie")
+			}
+			return parts[1], nil
+		}
+	}
+
+	return "", errors.New("missing steamLoginSecure cookie")
 }
 
 // DoRequest executes an arbitrary HTTP request using the API's httpClient
