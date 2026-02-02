@@ -151,7 +151,7 @@ func (c *Community) GetInventory(ctx context.Context, steamID steamid.SteamID, a
 
 	for {
 		reqURL := fmt.Sprintf(
-			"https://steamcommunity.com/inventory/%s/%d/%s?l=english&count=5000",
+			"https://steamcommunity.com/inventory/%s/%d/%s?l=english&count=1000",
 			steamID64, appID, contextID,
 		)
 		if startAssetID != "" {
