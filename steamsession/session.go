@@ -2,6 +2,7 @@ package steamsession
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -302,10 +303,35 @@ func (s *Session) LoadFromFile(filePath string) error {
 }
 
 func (s *Session) IsValidToken(ctx context.Context) bool {
-	return s.RefreshToken != ""
+	if s.RefreshToken == "" {
+		return false
+	}
+	exp, err := jwtExpiry(s.RefreshToken)
+	if err != nil {
+		return false
+	}
+	return time.Now().Before(exp)
+}
 
-	// _, err := s.GetWebCookies(ctx)
-	// return err == nil
+func jwtExpiry(token string) (time.Time, error) {
+	parts := strings.SplitN(token, ".", 3)
+	if len(parts) != 3 {
+		return time.Time{}, errors.New("invalid JWT format")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}, err
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return time.Time{}, err
+	}
+	if claims.Exp == 0 {
+		return time.Time{}, errors.New("missing exp claim")
+	}
+	return time.Unix(claims.Exp, 0), nil
 }
 
 // HTTPClient returns the session's underlying HTTP client.
