@@ -308,6 +308,13 @@ func (s *Session) IsValidToken(ctx context.Context) bool {
 	// return err == nil
 }
 
+// HTTPClient returns the session's underlying HTTP client.
+// After authentication and GetWebCookies, its cookie jar holds all session
+// state needed to construct steamapi.API or steamcommunity.Community instances.
+func (s *Session) HTTPClient() *http.Client {
+	return s.httpClient
+}
+
 // DoRequest executes an arbitrary HTTP request using the session's httpClient
 func (s *Session) DoRequest(req *http.Request) (*http.Response, error) {
 	return s.httpClient.Do(req)
