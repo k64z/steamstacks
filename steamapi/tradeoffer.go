@@ -98,14 +98,92 @@ func (a *API) GetTradeOffers(ctx context.Context, opts GetTradeOffersOptions) (*
 	}
 
 	var result struct {
-		Response TradeOffersResponse `json:"response"`
+		Response struct {
+			TradeOffersResponse
+			RawDescriptions []rawAssetDescription `json:"descriptions"`
+		} `json:"response"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
-	return &result.Response, nil
+	out := &result.Response.TradeOffersResponse
+	out.Descriptions = convertDescriptions(result.Response.RawDescriptions)
+	return out, nil
+}
+
+// GetTradeOfferWithDescriptions retrieves a single trade offer with item descriptions.
+func (a *API) GetTradeOfferWithDescriptions(ctx context.Context, offerID string) (*GetTradeOfferResult, error) {
+	params := url.Values{}
+	params.Set("access_token", a.accessToken)
+	params.Set("tradeofferid", offerID)
+	params.Set("language", "en")
+	params.Set("get_descriptions", "1")
+
+	reqURL := econServiceURL + "/GetTradeOffer/v1/?" + params.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := a.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if err := checkEconResponse(resp); err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Response struct {
+			Offer           *TradeOffer           `json:"offer"`
+			RawDescriptions []rawAssetDescription `json:"descriptions"`
+		} `json:"response"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	if result.Response.Offer == nil {
+		return nil, fmt.Errorf("offer not found")
+	}
+
+	return &GetTradeOfferResult{
+		Offer:        result.Response.Offer,
+		Descriptions: convertDescriptions(result.Response.RawDescriptions),
+	}, nil
+}
+
+func convertDescriptions(raw []rawAssetDescription) map[string]AssetDescription {
+	if len(raw) == 0 {
+		return nil
+	}
+	m := make(map[string]AssetDescription, len(raw))
+	for _, d := range raw {
+		m[AssetDescriptionKey(d.AppID, d.ClassID, d.InstanceID)] = AssetDescription{
+			AppID:          d.AppID,
+			ClassID:        d.ClassID,
+			InstanceID:     d.InstanceID,
+			Name:           d.Name,
+			MarketHashName: d.MarketHashName,
+			Type:           d.Type,
+			Tradable:       d.Tradable == 1,
+			Marketable:     d.Marketable == 1,
+			Commodity:      d.Commodity == 1,
+			IconURL:        d.IconURL,
+			IconURLLarge:   d.IconURLLarge,
+			Descriptions:   d.Descriptions,
+			Tags:           d.Tags,
+			Actions:        d.Actions,
+			FraudWarnings:  d.FraudWarnings,
+		}
+	}
+	return m
 }
 
 // checkEconResponse checks the response from IEconService endpoints

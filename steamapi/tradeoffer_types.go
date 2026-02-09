@@ -1,5 +1,7 @@
 package steamapi
 
+import "strconv"
+
 // ETradeOfferState represents the state of a trade offer
 type ETradeOfferState int
 
@@ -55,6 +57,80 @@ type TradeAsset struct {
 	Missing    bool   `json:"missing,omitempty"`
 }
 
+// DescriptionKey returns the lookup key for this asset's description
+// in TradeOffersResponse.Descriptions.
+func (a TradeAsset) DescriptionKey() string {
+	return AssetDescriptionKey(a.AppID, a.ClassID, a.InstanceID)
+}
+
+// AssetDescriptionKey builds the map key used in TradeOffersResponse.Descriptions.
+// Trade offers span multiple apps, so the key includes appID unlike inventory descriptions.
+func AssetDescriptionKey(appID int, classID, instanceID string) string {
+	return strconv.Itoa(appID) + "_" + classID + "_" + instanceID
+}
+
+// AssetDescription describes an item returned by GetTradeOffers
+// when GetDescriptions is true.
+type AssetDescription struct {
+	AppID          int               `json:"appid"`
+	ClassID        string            `json:"classid"`
+	InstanceID     string            `json:"instanceid"`
+	Name           string            `json:"name"`
+	MarketHashName string            `json:"market_hash_name"`
+	Type           string            `json:"type"`
+	Tradable       bool              `json:"tradable"`
+	Marketable     bool              `json:"marketable"`
+	Commodity      bool              `json:"commodity"`
+	IconURL        string            `json:"icon_url"`
+	IconURLLarge   string            `json:"icon_url_large,omitzero"`
+	Descriptions   []DescriptionLine `json:"descriptions,omitzero"`
+	Tags           []Tag             `json:"tags,omitzero"`
+	Actions        []Action          `json:"actions,omitzero"`
+	FraudWarnings  []string          `json:"fraudwarnings,omitzero"`
+}
+
+// DescriptionLine is a single line inside an item description block.
+type DescriptionLine struct {
+	Type  string `json:"type,omitzero"`
+	Value string `json:"value"`
+	Color string `json:"color,omitzero"`
+}
+
+// Tag is a category tag on an item description.
+type Tag struct {
+	Category              string `json:"category"`
+	InternalName          string `json:"internal_name"`
+	LocalizedCategoryName string `json:"localized_category_name"`
+	LocalizedTagName      string `json:"localized_tag_name"`
+	Color                 string `json:"color,omitzero"`
+}
+
+// Action is an action link on an item description.
+type Action struct {
+	Link string `json:"link"`
+	Name string `json:"name"`
+}
+
+// rawAssetDescription mirrors AssetDescription but with int booleans
+// matching Steam's wire format (0/1).
+type rawAssetDescription struct {
+	AppID          int               `json:"appid"`
+	ClassID        string            `json:"classid"`
+	InstanceID     string            `json:"instanceid"`
+	Name           string            `json:"name"`
+	MarketHashName string            `json:"market_hash_name"`
+	Type           string            `json:"type"`
+	Tradable       int               `json:"tradable"`
+	Marketable     int               `json:"marketable"`
+	Commodity      int               `json:"commodity"`
+	IconURL        string            `json:"icon_url"`
+	IconURLLarge   string            `json:"icon_url_large"`
+	Descriptions   []DescriptionLine `json:"descriptions"`
+	Tags           []Tag             `json:"tags"`
+	Actions        []Action          `json:"actions"`
+	FraudWarnings  []string          `json:"fraudwarnings"`
+}
+
 // GetTradeOffersOptions contains options for GetTradeOffers
 type GetTradeOffersOptions struct {
 	GetSentOffers        bool
@@ -68,6 +144,13 @@ type GetTradeOffersOptions struct {
 
 // TradeOffersResponse contains the response from GetTradeOffers
 type TradeOffersResponse struct {
-	SentOffers     []TradeOffer `json:"trade_offers_sent"`
-	ReceivedOffers []TradeOffer `json:"trade_offers_received"`
+	SentOffers     []TradeOffer                `json:"trade_offers_sent"`
+	ReceivedOffers []TradeOffer                `json:"trade_offers_received"`
+	Descriptions   map[string]AssetDescription `json:"-"`
+}
+
+// GetTradeOfferResult contains a single trade offer with optional descriptions.
+type GetTradeOfferResult struct {
+	Offer        *TradeOffer
+	Descriptions map[string]AssetDescription
 }
