@@ -2,6 +2,7 @@ package steamapi
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -45,12 +46,24 @@ func New(opts ...Option) (*API, error) {
 		a.httpClient = http.DefaultClient
 	}
 
-	// Extract access token from cookie jar (if available)
-	if a.httpClient.Jar != nil {
-		a.accessToken, _ = extractAccessToken(a.httpClient.Jar)
-	}
-
 	return a, nil
+}
+
+// ensureInit lazily extracts the access token from the cookie jar.
+// It caches on success and retries on failure.
+func (a *API) ensureInit() error {
+	if a.accessToken != "" {
+		return nil
+	}
+	if a.httpClient.Jar == nil {
+		return errors.New("no cookie jar available")
+	}
+	var err error
+	a.accessToken, err = extractAccessToken(a.httpClient.Jar)
+	if err != nil {
+		return fmt.Errorf("extract access token: %w", err)
+	}
+	return nil
 }
 
 // extractAccessToken extracts the access token from the steamLoginSecure cookie.

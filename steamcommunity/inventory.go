@@ -203,5 +203,8 @@ func (c *Community) GetInventory(ctx context.Context, steamID steamid.SteamID, a
 }
 
 func (c *Community) GetOwnInventory(ctx context.Context, appID int, contextID string) ([]InventoryItem, error) {
+	if err := c.ensureInit(); err != nil {
+		return nil, err
+	}
 	return c.GetInventory(ctx, c.SteamID, appID, contextID)
 }

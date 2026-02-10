@@ -50,18 +50,26 @@ func New(opts ...Option) (*Community, error) {
 		c.httpClient = http.DefaultClient
 	}
 
+	return c, nil
+}
+
+// ensureInit lazily extracts session credentials from the cookie jar.
+// It caches on success and retries on failure.
+func (c *Community) ensureInit() error {
+	if c.sessionID != "" {
+		return nil
+	}
 	var err error
 	c.sessionID, err = extractSessionID(c.httpClient.Jar)
 	if err != nil {
-		return nil, fmt.Errorf("extract sessionID: %w", err)
+		return fmt.Errorf("extract sessionID: %w", err)
 	}
-
 	c.SteamID, err = extractSteamID(c.httpClient.Jar)
 	if err != nil {
-		return nil, fmt.Errorf("extract steamID: %w", err)
+		c.sessionID = "" // reset so next call retries
+		return fmt.Errorf("extract steamID: %w", err)
 	}
-
-	return c, nil
+	return nil
 }
 
 func extractSessionID(jar http.CookieJar) (string, error) {

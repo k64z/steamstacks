@@ -95,6 +95,9 @@ func (c *Community) buildConfirmationParams(identitySecret []byte, tag string) (
 // GetConfirmations retrieves all pending confirmations.
 // The identitySecret should be the base64-decoded identity_secret from your maFile.
 func (c *Community) GetConfirmations(ctx context.Context, identitySecret []byte) ([]Confirmation, error) {
+	if err := c.ensureInit(); err != nil {
+		return nil, err
+	}
 	params, err := c.buildConfirmationParams(identitySecret, "list")
 	if err != nil {
 		return nil, err
@@ -231,11 +234,17 @@ func (c *Community) respondToConfirmation(ctx context.Context, conf Confirmation
 
 // AcceptConfirmation accepts a pending confirmation.
 func (c *Community) AcceptConfirmation(ctx context.Context, conf Confirmation, identitySecret []byte) error {
+	if err := c.ensureInit(); err != nil {
+		return err
+	}
 	return c.respondToConfirmation(ctx, conf, identitySecret, true)
 }
 
 // RejectConfirmation rejects a pending confirmation.
 func (c *Community) RejectConfirmation(ctx context.Context, conf Confirmation, identitySecret []byte) error {
+	if err := c.ensureInit(); err != nil {
+		return err
+	}
 	return c.respondToConfirmation(ctx, conf, identitySecret, false)
 }
 
@@ -243,6 +252,9 @@ func (c *Community) RejectConfirmation(ctx context.Context, conf Confirmation, i
 // For trade offers, the creator ID is the trade offer ID.
 // For market listings, the creator ID is the listing ID.
 func (c *Community) AcceptConfirmationByCreatorID(ctx context.Context, identitySecret []byte, creatorID string) error {
+	if err := c.ensureInit(); err != nil {
+		return err
+	}
 	confirmations, err := c.GetConfirmations(ctx, identitySecret)
 	if err != nil {
 		return fmt.Errorf("get confirmations: %w", err)
@@ -259,6 +271,9 @@ func (c *Community) AcceptConfirmationByCreatorID(ctx context.Context, identityS
 
 // RejectConfirmationByCreatorID finds and rejects a confirmation by its creator ID.
 func (c *Community) RejectConfirmationByCreatorID(ctx context.Context, identitySecret []byte, creatorID string) error {
+	if err := c.ensureInit(); err != nil {
+		return err
+	}
 	confirmations, err := c.GetConfirmations(ctx, identitySecret)
 	if err != nil {
 		return fmt.Errorf("get confirmations: %w", err)

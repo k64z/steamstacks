@@ -111,6 +111,9 @@ type Badge struct {
 }
 
 func (c *Community) ProfileData() (*ProfileData, error) {
+	if err := c.ensureInit(); err != nil {
+		return nil, err
+	}
 	u := fmt.Sprintf("https://steamcommunity.com/profiles/%d/edit/info", c.SteamID)
 	resp, err := c.httpClient.Get(u)
 	if err != nil {
@@ -135,6 +138,9 @@ func (c *Community) PrivacySettings() (*PrivacySettings, error) {
 }
 
 func (c *Community) SetPrivacySettings(ctx context.Context, settings *PrivacySettings) error {
+	if err := c.ensureInit(); err != nil {
+		return err
+	}
 	if settings == nil {
 		return errors.New("settings cannot be nil")
 	}
@@ -203,6 +209,9 @@ type EditProfileRequest struct {
 }
 
 func (c *Community) EditProfile(ctx context.Context, p EditProfileRequest) error {
+	if err := c.ensureInit(); err != nil {
+		return err
+	}
 	buf := new(bytes.Buffer)
 	w := multipart.NewWriter(buf)
 
@@ -264,6 +273,9 @@ func (c *Community) EditProfile(ctx context.Context, p EditProfileRequest) error
 }
 
 func (c *Community) UploadAvatar(ctx context.Context, avatar io.Reader) error {
+	if err := c.ensureInit(); err != nil {
+		return err
+	}
 	buf := new(bytes.Buffer)
 	w := multipart.NewWriter(buf)
 
@@ -332,6 +344,9 @@ func (c *Community) UploadAvatar(ctx context.Context, avatar io.Reader) error {
 }
 
 func (c *Community) ClearAliasHistory(ctx context.Context) error {
+	if err := c.ensureInit(); err != nil {
+		return err
+	}
 	formData := &url.Values{
 		"sessionid": {c.sessionID},
 	}

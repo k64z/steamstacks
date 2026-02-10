@@ -61,6 +61,9 @@ type tradeOfferAsset struct {
 
 // SendTradeOffer sends a new trade offer to a partner
 func (c *Community) SendTradeOffer(ctx context.Context, opts SendTradeOfferOptions) (*SendTradeOfferResponse, error) {
+	if err := c.ensureInit(); err != nil {
+		return nil, err
+	}
 	partnerAccountID := opts.Partner.AccountID()
 
 	// Build the json_tradeoffer structure
@@ -189,6 +192,9 @@ func (c *Community) SendTradeOffer(ctx context.Context, opts SendTradeOfferOptio
 
 // AcceptTradeOffer accepts a received trade offer
 func (c *Community) AcceptTradeOffer(ctx context.Context, offerID string, partnerSteamID steamid.SteamID) (*AcceptTradeOfferResponse, error) {
+	if err := c.ensureInit(); err != nil {
+		return nil, err
+	}
 	acceptURL := fmt.Sprintf("https://steamcommunity.com/tradeoffer/%s/accept", offerID)
 	refererURL := fmt.Sprintf("https://steamcommunity.com/tradeoffer/%s/", offerID)
 
@@ -254,6 +260,9 @@ func (c *Community) DeclineTradeOffer(ctx context.Context, offerID string) error
 }
 
 func (c *Community) cancelOrDeclineOffer(ctx context.Context, offerID, action string) error {
+	if err := c.ensureInit(); err != nil {
+		return err
+	}
 	actionURL := fmt.Sprintf("https://steamcommunity.com/tradeoffer/%s/%s", offerID, action)
 	refererURL := fmt.Sprintf("https://steamcommunity.com/tradeoffer/%s/", offerID)
 
