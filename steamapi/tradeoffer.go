@@ -14,6 +14,9 @@ const econServiceURL = "https://api.steampowered.com/IEconService"
 
 // GetTradeOffer retrieves a single trade offer by ID
 func (a *API) GetTradeOffer(ctx context.Context, offerID string) (*TradeOffer, error) {
+	if err := a.ensureInit(); err != nil {
+		return nil, err
+	}
 	params := url.Values{}
 	params.Set("access_token", a.accessToken)
 	params.Set("tradeofferid", offerID)
@@ -55,6 +58,9 @@ func (a *API) GetTradeOffer(ctx context.Context, offerID string) (*TradeOffer, e
 
 // GetTradeOffers retrieves lists of sent and received trade offers
 func (a *API) GetTradeOffers(ctx context.Context, opts GetTradeOffersOptions) (*TradeOffersResponse, error) {
+	if err := a.ensureInit(); err != nil {
+		return nil, err
+	}
 	params := url.Values{}
 	params.Set("access_token", a.accessToken)
 
@@ -115,6 +121,9 @@ func (a *API) GetTradeOffers(ctx context.Context, opts GetTradeOffersOptions) (*
 
 // GetTradeOfferWithDescriptions retrieves a single trade offer with item descriptions.
 func (a *API) GetTradeOfferWithDescriptions(ctx context.Context, offerID string) (*GetTradeOfferResult, error) {
+	if err := a.ensureInit(); err != nil {
+		return nil, err
+	}
 	params := url.Values{}
 	params.Set("access_token", a.accessToken)
 	params.Set("tradeofferid", offerID)
