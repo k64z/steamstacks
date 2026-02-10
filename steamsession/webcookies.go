@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -61,8 +60,6 @@ func (s *Session) FinalizeLogin(ctx context.Context) error {
 	w.WriteField("redir", "https://steamcommunity.com/login/home/?goto=")
 	w.Close()
 
-	log.Println("RefreshToken", s.RefreshToken)
-
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://login.steampowered.com/jwt/finalizelogin", buf)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
@@ -111,8 +108,6 @@ func (s *Session) FinalizeLogin(ctx context.Context) error {
 }
 
 func (s *Session) submitTransferInfo(ctx context.Context, transferInfo TransferInfo) error {
-	log.Printf("Setting token on %s (%d)", transferInfo.URL, s.SteamID)
-
 	u, err := url.Parse(transferInfo.URL)
 	if err != nil {
 		return fmt.Errorf("parseURL: %w", err)

@@ -3,7 +3,6 @@ package steamcommunity
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -75,7 +74,6 @@ func (c *Community) ensureInit() error {
 func extractSessionID(jar http.CookieJar) (string, error) {
 	u, _ := url.Parse("https://steamcommunity.com")
 	cookies := jar.Cookies(u)
-	log.Printf("cookie: %+v", cookies)
 
 	for _, cookie := range cookies {
 		if cookie.Name == "sessionid" {
@@ -89,8 +87,6 @@ func extractSessionID(jar http.CookieJar) (string, error) {
 func extractSteamID(jar http.CookieJar) (steamid.SteamID, error) {
 	u, _ := url.Parse("https://steamcommunity.com")
 	cookies := jar.Cookies(u)
-
-	log.Printf("cookie: %+v", cookies)
 
 	for _, cookie := range cookies {
 		if cookie.Name == "steamLoginSecure" {

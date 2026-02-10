@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"net/http/cookiejar"
 	"os"
@@ -138,7 +137,6 @@ func (s *Session) StartWithCredentials(ctx context.Context, username, password s
 	if strings.TrimSpace(password) == "" {
 		return nil, ErrEmptyPassword
 	}
-	log.Println("starting authentication session...")
 	rsaKey, err := s.steamAPI.GetPasswordRSAPublicKey(ctx, username)
 	if err != nil {
 		return nil, fmt.Errorf("get RSA public key: %w", err)
@@ -194,7 +192,6 @@ func (s *Session) StartWithCredentials(ctx context.Context, username, password s
 		}
 	}
 
-	log.Println("authentication session started successfully")
 	return guardTypes, nil
 }
 
@@ -223,14 +220,10 @@ func (s *Session) PollAuthSessionStatus(ctx context.Context) error {
 	}
 
 	for {
-		log.Println("polling")
-
 		resp, err := s.steamAPI.PollAuthSessionStatus(ctx, req)
 		if err != nil {
-			log.Printf("error polling session: %v", err)
 			select {
 			case <-ctx.Done():
-				log.Println("polling cancelled")
 				return ctx.Err()
 			case <-time.After(s.pollingInterval):
 			}
@@ -277,7 +270,6 @@ func (s *Session) SaveToFile(filePath string) error {
 		return fmt.Errorf("write session file: %w", err)
 	}
 
-	log.Printf("Session saved to %s", filePath)
 	return nil
 }
 
@@ -298,7 +290,6 @@ func (s *Session) LoadFromFile(filePath string) error {
 	s.RefreshToken = persistentSession.RefreshToken
 	s.SteamID = persistentSession.SteamID
 
-	log.Printf("Session loaded from %s", filePath)
 	return nil
 }
 
