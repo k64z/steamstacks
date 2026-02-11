@@ -2,10 +2,6 @@ package steamcommunity
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha1"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +11,7 @@ import (
 	"time"
 
 	"github.com/k64z/steamstacks/steamapi"
+	"github.com/k64z/steamstacks/steamtotp"
 )
 
 // ConfirmationType represents the type of confirmation.
@@ -50,26 +47,6 @@ type Confirmation struct {
 	Icon      string           `json:"icon"`
 }
 
-// getConfirmationKey generates an HMAC-SHA1 confirmation key.
-func getConfirmationKey(identitySecret []byte, timestamp int64, tag string) string {
-	buf := make([]byte, 8+len(tag))
-	binary.BigEndian.PutUint64(buf[:8], uint64(timestamp))
-	copy(buf[8:], tag)
-
-	mac := hmac.New(sha1.New, identitySecret)
-	mac.Write(buf)
-	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
-}
-
-// getDeviceID generates a device ID from a SteamID64.
-func getDeviceID(steamID64 uint64) string {
-	h := sha1.Sum(fmt.Appendf(nil, "%d", steamID64))
-	hex := fmt.Sprintf("%x", h)
-	// Format as: android:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-	return fmt.Sprintf("android:%s-%s-%s-%s-%s",
-		hex[0:8], hex[8:12], hex[12:16], hex[16:20], hex[20:32])
-}
-
 // buildConfirmationParams builds the common query parameters for confirmation requests.
 func (c *Community) buildConfirmationParams(identitySecret []byte, tag string) (url.Values, error) {
 	serverTime, _, err := steamapi.GetSteamTimeWithClient(context.Background(), c.httpClient)
@@ -78,8 +55,8 @@ func (c *Community) buildConfirmationParams(identitySecret []byte, tag string) (
 	}
 
 	steamID64 := c.SteamID.ToSteamID64()
-	key := getConfirmationKey(identitySecret, serverTime, tag)
-	deviceID := getDeviceID(steamID64)
+	key := steamtotp.GenerateConfirmationKey(identitySecret, serverTime, tag)
+	deviceID := steamtotp.GetDeviceID(steamID64)
 
 	params := url.Values{}
 	params.Set("p", deviceID)
