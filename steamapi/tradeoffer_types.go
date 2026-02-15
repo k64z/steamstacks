@@ -78,9 +78,9 @@ type AssetDescription struct {
 	Name           string            `json:"name"`
 	MarketHashName string            `json:"market_hash_name"`
 	Type           string            `json:"type"`
-	Tradable       bool              `json:"tradable"`
-	Marketable     bool              `json:"marketable"`
-	Commodity      bool              `json:"commodity"`
+	Tradable       bool              `json:"tradable"`       // Steam changed wire format from int (0/1) to bool
+	Marketable     bool              `json:"marketable"`     // Steam changed wire format from int (0/1) to bool
+	Commodity      bool              `json:"commodity"`      // Steam changed wire format from int (0/1) to bool
 	IconURL        string            `json:"icon_url"`
 	IconURLLarge   string            `json:"icon_url_large,omitzero"`
 	Descriptions   []DescriptionLine `json:"descriptions,omitzero"`
@@ -109,26 +109,6 @@ type Tag struct {
 type Action struct {
 	Link string `json:"link"`
 	Name string `json:"name"`
-}
-
-// rawAssetDescription mirrors AssetDescription but with int booleans
-// matching Steam's wire format (0/1).
-type rawAssetDescription struct {
-	AppID          int               `json:"appid"`
-	ClassID        string            `json:"classid"`
-	InstanceID     string            `json:"instanceid"`
-	Name           string            `json:"name"`
-	MarketHashName string            `json:"market_hash_name"`
-	Type           string            `json:"type"`
-	Tradable       int               `json:"tradable"`
-	Marketable     int               `json:"marketable"`
-	Commodity      int               `json:"commodity"`
-	IconURL        string            `json:"icon_url"`
-	IconURLLarge   string            `json:"icon_url_large"`
-	Descriptions   []DescriptionLine `json:"descriptions"`
-	Tags           []Tag             `json:"tags"`
-	Actions        []Action          `json:"actions"`
-	FraudWarnings  []string          `json:"fraudwarnings"`
 }
 
 // GetTradeOffersOptions contains options for GetTradeOffers

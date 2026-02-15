@@ -1,45 +1,60 @@
 package steamapi
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
-func TestConvertDescriptions(t *testing.T) {
-	raw := []rawAssetDescription{
+func TestAssetDescriptionUnmarshal(t *testing.T) {
+	// Simulates the descriptions array from GetTradeOffers with Steam's
+	// current wire format (bool for tradable/marketable/commodity).
+	const payload = `[
 		{
-			AppID:          440,
-			ClassID:        "101",
-			InstanceID:     "0",
-			Name:           "The Sydney Sleeper",
-			MarketHashName: "The Sydney Sleeper",
-			Type:           "Level 1 Sniper Rifle",
-			Tradable:       1,
-			Marketable:     0,
-			Commodity:      0,
-			IconURL:        "icon_101",
-			IconURLLarge:   "icon_101_large",
-			Descriptions: []DescriptionLine{
-				{Value: "+25% charge rate", Color: "7ea9d1"},
-			},
-			Tags: []Tag{
-				{Category: "Quality", InternalName: "Unique", LocalizedCategoryName: "Quality", LocalizedTagName: "Unique", Color: "7D6D00"},
-			},
-			Actions: []Action{
-				{Link: "http://example.com", Name: "Wiki Page"},
-			},
-			FraudWarnings: []string{"renamed"},
+			"appid": 440,
+			"classid": "101",
+			"instanceid": "0",
+			"name": "The Sydney Sleeper",
+			"market_hash_name": "The Sydney Sleeper",
+			"type": "Level 1 Sniper Rifle",
+			"tradable": true,
+			"marketable": false,
+			"commodity": false,
+			"icon_url": "icon_101",
+			"icon_url_large": "icon_101_large",
+			"descriptions": [
+				{"value": "+25% charge rate", "color": "7ea9d1"}
+			],
+			"tags": [
+				{"category": "Quality", "internal_name": "Unique", "localized_category_name": "Quality", "localized_tag_name": "Unique", "color": "7D6D00"}
+			],
+			"actions": [
+				{"link": "http://example.com", "name": "Wiki Page"}
+			],
+			"fraudwarnings": ["renamed"]
 		},
 		{
-			AppID:      730,
-			ClassID:    "200",
-			InstanceID: "55",
-			Name:       "AK-47 | Redline",
-			Type:       "Classified Rifle",
-			Tradable:   1,
-			Marketable: 1,
-			Commodity:  1,
-		},
+			"appid": 730,
+			"classid": "200",
+			"instanceid": "55",
+			"name": "AK-47 | Redline",
+			"type": "Classified Rifle",
+			"tradable": true,
+			"marketable": true,
+			"commodity": true,
+			"icon_url": ""
+		}
+	]`
+
+	var descs []AssetDescription
+	if err := json.Unmarshal([]byte(payload), &descs); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
 	}
 
-	m := convertDescriptions(raw)
+	// Build map the same way production code does.
+	m := make(map[string]AssetDescription, len(descs))
+	for _, d := range descs {
+		m[AssetDescriptionKey(d.AppID, d.ClassID, d.InstanceID)] = d
+	}
 
 	if got, want := len(m), 2; got != want {
 		t.Fatalf("len(m) = %d; want %d", got, want)
@@ -97,12 +112,13 @@ func TestConvertDescriptions(t *testing.T) {
 	}
 }
 
-func TestConvertDescriptions_Empty(t *testing.T) {
-	if m := convertDescriptions(nil); m != nil {
-		t.Errorf("convertDescriptions(nil) = %v; want nil", m)
+func TestAssetDescriptionUnmarshal_Empty(t *testing.T) {
+	var descs []AssetDescription
+	if err := json.Unmarshal([]byte(`[]`), &descs); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
 	}
-	if m := convertDescriptions([]rawAssetDescription{}); m != nil {
-		t.Errorf("convertDescriptions([]) = %v; want nil", m)
+	if len(descs) != 0 {
+		t.Errorf("len(descs) = %d; want 0", len(descs))
 	}
 }
 
