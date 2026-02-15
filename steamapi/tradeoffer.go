@@ -106,7 +106,7 @@ func (a *API) GetTradeOffers(ctx context.Context, opts GetTradeOffersOptions) (*
 	var result struct {
 		Response struct {
 			TradeOffersResponse
-			RawDescriptions []rawAssetDescription `json:"descriptions"`
+			Descriptions []AssetDescription `json:"descriptions"`
 		} `json:"response"`
 	}
 
@@ -115,7 +115,12 @@ func (a *API) GetTradeOffers(ctx context.Context, opts GetTradeOffersOptions) (*
 	}
 
 	out := &result.Response.TradeOffersResponse
-	out.Descriptions = convertDescriptions(result.Response.RawDescriptions)
+	if len(result.Response.Descriptions) > 0 {
+		out.Descriptions = make(map[string]AssetDescription, len(result.Response.Descriptions))
+		for _, d := range result.Response.Descriptions {
+			out.Descriptions[AssetDescriptionKey(d.AppID, d.ClassID, d.InstanceID)] = d
+		}
+	}
 	return out, nil
 }
 
@@ -149,8 +154,8 @@ func (a *API) GetTradeOfferWithDescriptions(ctx context.Context, offerID string)
 
 	var result struct {
 		Response struct {
-			Offer           *TradeOffer           `json:"offer"`
-			RawDescriptions []rawAssetDescription `json:"descriptions"`
+			Offer        *TradeOffer        `json:"offer"`
+			Descriptions []AssetDescription `json:"descriptions"`
 		} `json:"response"`
 	}
 
@@ -162,37 +167,18 @@ func (a *API) GetTradeOfferWithDescriptions(ctx context.Context, offerID string)
 		return nil, fmt.Errorf("offer not found")
 	}
 
-	return &GetTradeOfferResult{
-		Offer:        result.Response.Offer,
-		Descriptions: convertDescriptions(result.Response.RawDescriptions),
-	}, nil
-}
-
-func convertDescriptions(raw []rawAssetDescription) map[string]AssetDescription {
-	if len(raw) == 0 {
-		return nil
-	}
-	m := make(map[string]AssetDescription, len(raw))
-	for _, d := range raw {
-		m[AssetDescriptionKey(d.AppID, d.ClassID, d.InstanceID)] = AssetDescription{
-			AppID:          d.AppID,
-			ClassID:        d.ClassID,
-			InstanceID:     d.InstanceID,
-			Name:           d.Name,
-			MarketHashName: d.MarketHashName,
-			Type:           d.Type,
-			Tradable:       d.Tradable == 1,
-			Marketable:     d.Marketable == 1,
-			Commodity:      d.Commodity == 1,
-			IconURL:        d.IconURL,
-			IconURLLarge:   d.IconURLLarge,
-			Descriptions:   d.Descriptions,
-			Tags:           d.Tags,
-			Actions:        d.Actions,
-			FraudWarnings:  d.FraudWarnings,
+	var descs map[string]AssetDescription
+	if len(result.Response.Descriptions) > 0 {
+		descs = make(map[string]AssetDescription, len(result.Response.Descriptions))
+		for _, d := range result.Response.Descriptions {
+			descs[AssetDescriptionKey(d.AppID, d.ClassID, d.InstanceID)] = d
 		}
 	}
-	return m
+
+	return &GetTradeOfferResult{
+		Offer:        result.Response.Offer,
+		Descriptions: descs,
+	}, nil
 }
 
 // checkEconResponse checks the response from IEconService endpoints
