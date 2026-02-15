@@ -48,7 +48,8 @@ type Session struct {
 }
 
 type config struct {
-	httpClient *http.Client
+	httpClient   *http.Client
+	platformType PlatformType
 }
 
 type Option func(options *config) error
@@ -59,6 +60,15 @@ func WithHTTPClient(httpClient *http.Client) Option {
 			return errors.New("httpClient should be non-nil")
 		}
 		options.httpClient = httpClient
+		return nil
+	}
+}
+
+// WithPlatformType sets the authentication platform type.
+// This controls the token audience — use PlatformTypeSteamClient for CM login.
+func WithPlatformType(pt PlatformType) Option {
+	return func(options *config) error {
+		options.platformType = pt
 		return nil
 	}
 }
@@ -78,9 +88,15 @@ func New(opts ...Option) (*Session, error) {
 		language:     DefaultLanguageCode,
 	}
 
-	if cfg.httpClient != nil {
-		s.httpClient = cfg.httpClient
-	} else {
+	switch cfg.platformType {
+	case PlatformTypeSteamClient:
+		s.platformType = protocol.EAuthTokenPlatformType_k_EAuthTokenPlatformType_SteamClient
+	case PlatformTypeMobileApp:
+		s.platformType = protocol.EAuthTokenPlatformType_k_EAuthTokenPlatformType_MobileApp
+	}
+
+	s.httpClient = cfg.httpClient
+	if s.httpClient == nil {
 		s.httpClient = http.DefaultClient
 	}
 
@@ -128,7 +144,7 @@ func (s *Session) LoginWithDeviceCode(ctx context.Context, username, password, c
 	return nil
 }
 
-// StartWithCredentials
+// StartWithCredentials begins an auth session and returns the allowed guard types.
 func (s *Session) StartWithCredentials(ctx context.Context, username, password string) ([]EAuthSessionGuardType, error) {
 	if strings.TrimSpace(username) == "" {
 		return nil, ErrEmptyUsername
@@ -172,24 +188,10 @@ func (s *Session) StartWithCredentials(ctx context.Context, username, password s
 	s.SteamID = steamid.FromSteamID64(*authSession.Steamid)
 	s.weakToken = *authSession.WeakToken
 
-	guardTypes := []EAuthSessionGuardType{}
-	for _, conf := range authSession.AllowedConfirmations {
-		switch *conf.ConfirmationType {
-		case protocol.EAuthSessionGuardType_k_EAuthSessionGuardType_Unknown:
-			guardTypes = append(guardTypes, EAuthSessionGuardTypeUnknown)
-		case protocol.EAuthSessionGuardType_k_EAuthSessionGuardType_None:
-			guardTypes = append(guardTypes, EAuthSessionGuardTypeNone)
-		case protocol.EAuthSessionGuardType_k_EAuthSessionGuardType_EmailCode:
-			guardTypes = append(guardTypes, EAuthSessionGuardTypeEmailCode)
-		case protocol.EAuthSessionGuardType_k_EAuthSessionGuardType_DeviceCode:
-			guardTypes = append(guardTypes, EAuthSessionGuardTypeDeviceCode)
-		case protocol.EAuthSessionGuardType_k_EAuthSessionGuardType_DeviceConfirmation:
-			guardTypes = append(guardTypes, EAuthSessionGuardTypeDeviceConfirmation)
-		case protocol.EAuthSessionGuardType_k_EAuthSessionGuardType_EmailConfirmation:
-			guardTypes = append(guardTypes, EAuthSessionGuardTypeEmailConfirmation)
-		case protocol.EAuthSessionGuardType_k_EAuthSessionGuardType_MachineToken:
-			guardTypes = append(guardTypes, EAuthSessionGuardTypeMachineToken)
-		}
+	// EAuthSessionGuardType values mirror the proto enum, so a direct cast works.
+	guardTypes := make([]EAuthSessionGuardType, len(authSession.AllowedConfirmations))
+	for i, conf := range authSession.AllowedConfirmations {
+		guardTypes[i] = EAuthSessionGuardType(*conf.ConfirmationType)
 	}
 
 	return guardTypes, nil
@@ -205,12 +207,7 @@ func (s *Session) SubmitSteamGuardCode(ctx context.Context, code string, guardTy
 		CodeType: (*protocol.EAuthSessionGuardType)(&guardType),
 	}
 
-	err := s.steamAPI.UpdateAuthSessionWithSteamGuardCode(ctx, req)
-	if err != nil {
-		return fmt.Errorf("update session: %w", err)
-	}
-
-	return nil
+	return s.steamAPI.UpdateAuthSessionWithSteamGuardCode(ctx, req)
 }
 
 func (s *Session) PollAuthSessionStatus(ctx context.Context) error {
