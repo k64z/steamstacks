@@ -15,6 +15,7 @@ const (
 	EMsgClientRemoveFriend          EMsg = 714
 	EMsgClientChangeStatus          EMsg = 716
 	EMsgClientFriendMsg             EMsg = 718
+	EMsgClientGamesPlayed           EMsg = 742
 	EMsgClientLogOnResponse         EMsg = 751
 	EMsgClientLoggedOff             EMsg = 757
 	EMsgClientPersonaState          EMsg = 766
@@ -45,6 +46,7 @@ var emsgNames = map[EMsg]string{
 	EMsgClientRemoveFriend:          "ClientRemoveFriend",
 	EMsgClientChangeStatus:          "ClientChangeStatus",
 	EMsgClientFriendMsg:             "ClientFriendMsg",
+	EMsgClientGamesPlayed:           "ClientGamesPlayed",
 	EMsgClientLogOnResponse:         "ClientLogOnResponse",
 	EMsgClientLoggedOff:             "ClientLoggedOff",
 	EMsgClientPersonaState:          "ClientPersonaState",

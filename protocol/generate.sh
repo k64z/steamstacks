@@ -20,6 +20,8 @@ PROTOS=(
     "steammessages_auth.steamclient.proto"
     "steammessages_clientserver_login.proto"
     "steammessages_clientserver_friends.proto"
+    "encrypted_app_ticket.proto"
+    "steammessages_clientserver.proto"
     "enums.proto"
 )
 
