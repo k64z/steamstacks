@@ -20,6 +20,7 @@ RUN protoc \
     --go_opt=Msteammessages_clientserver_friends.proto=github.com/k64z/steamstacks/protocol \
     --go_opt=Mencrypted_app_ticket.proto=github.com/k64z/steamstacks/protocol \
     --go_opt=Msteammessages_clientserver.proto=github.com/k64z/steamstacks/protocol \
+    --go_opt=Msteammessages_clientserver_2.proto=github.com/k64z/steamstacks/protocol \
     --go_opt=Menums.proto=github.com/k64z/steamstacks/protocol \
     steammessages_base.proto \
     steammessages_unified_base.steamclient.proto \
@@ -28,4 +29,5 @@ RUN protoc \
     steammessages_clientserver_friends.proto \
     encrypted_app_ticket.proto \
     steammessages_clientserver.proto \
+    steammessages_clientserver_2.proto \
     enums.proto
