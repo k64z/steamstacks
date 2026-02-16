@@ -45,6 +45,12 @@ type Client struct {
 	// OnPersonaState is called when a friend's persona state changes.
 	OnPersonaState func(*PersonaStateEvent)
 
+	// OnTradeNotification is called when the pending trade offer count changes.
+	OnTradeNotification func(*TradeNotification)
+
+	// OnItemNotification is called when new inventory items arrive.
+	OnItemNotification func(*ItemNotification)
+
 	mu       sync.Mutex
 	done     chan struct{} // closed on Disconnect
 	wg       sync.WaitGroup
@@ -52,13 +58,15 @@ type Client struct {
 }
 
 type config struct {
-	transport      TransportType
-	httpClient     *http.Client
-	logger         *slog.Logger
-	onPacket       func(*Packet)
-	onFriendMsg    func(*FriendMessage)
-	onRelationship func(*RelationshipEvent)
-	onPersonaState func(*PersonaStateEvent)
+	transport           TransportType
+	httpClient          *http.Client
+	logger              *slog.Logger
+	onPacket            func(*Packet)
+	onFriendMsg         func(*FriendMessage)
+	onRelationship      func(*RelationshipEvent)
+	onPersonaState      func(*PersonaStateEvent)
+	onTradeNotification func(*TradeNotification)
+	onItemNotification  func(*ItemNotification)
 }
 
 // Option configures a Client.
@@ -111,13 +119,15 @@ func New(opts ...Option) *Client {
 	}
 
 	return &Client{
-		transport:       cfg.transport,
-		httpClient:      cfg.httpClient,
-		logger:          cfg.logger,
-		OnPacket:        cfg.onPacket,
-		OnFriendMessage: cfg.onFriendMsg,
-		OnRelationship:  cfg.onRelationship,
-		OnPersonaState:  cfg.onPersonaState,
+		transport:           cfg.transport,
+		httpClient:          cfg.httpClient,
+		logger:              cfg.logger,
+		OnPacket:            cfg.onPacket,
+		OnFriendMessage:     cfg.onFriendMsg,
+		OnRelationship:      cfg.onRelationship,
+		OnPersonaState:      cfg.onPersonaState,
+		OnTradeNotification: cfg.onTradeNotification,
+		OnItemNotification:  cfg.onItemNotification,
 	}
 }
 
@@ -390,6 +400,12 @@ func (c *Client) handlePacket(pkt *Packet) {
 
 	case EMsgClientFriendMsgIncoming, EMsgClientFriendMsgEchoToSender:
 		c.handleFriendMsgIncoming(pkt)
+
+	case EMsgClientUserNotifications:
+		c.handleUserNotifications(pkt)
+
+	case EMsgClientItemAnnouncements:
+		c.handleItemAnnouncements(pkt)
 	}
 
 	// Forward all non-Multi packets to the generic handler.
