@@ -17,9 +17,11 @@ RUN protoc \
     --go_opt=Msteammessages_unified_base.steamclient.proto=github.com/k64z/steamstacks/protocol \
     --go_opt=Msteammessages_auth.steamclient.proto=github.com/k64z/steamstacks/protocol \
     --go_opt=Msteammessages_clientserver_login.proto=github.com/k64z/steamstacks/protocol \
+    --go_opt=Msteammessages_clientserver_friends.proto=github.com/k64z/steamstacks/protocol \
     --go_opt=Menums.proto=github.com/k64z/steamstacks/protocol \
     steammessages_base.proto \
     steammessages_unified_base.steamclient.proto \
     steammessages_auth.steamclient.proto \
     steammessages_clientserver_login.proto \
+    steammessages_clientserver_friends.proto \
     enums.proto
