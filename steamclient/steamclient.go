@@ -42,6 +42,9 @@ type Client struct {
 	// OnRelationship is called for friend list / relationship changes.
 	OnRelationship func(*RelationshipEvent)
 
+	// OnPersonaState is called when a friend's persona state changes.
+	OnPersonaState func(*PersonaStateEvent)
+
 	mu       sync.Mutex
 	done     chan struct{} // closed on Disconnect
 	wg       sync.WaitGroup
@@ -55,6 +58,7 @@ type config struct {
 	onPacket       func(*Packet)
 	onFriendMsg    func(*FriendMessage)
 	onRelationship func(*RelationshipEvent)
+	onPersonaState func(*PersonaStateEvent)
 }
 
 // Option configures a Client.
@@ -90,6 +94,11 @@ func WithRelationshipHandler(fn func(*RelationshipEvent)) Option {
 	return func(c *config) { c.onRelationship = fn }
 }
 
+// WithPersonaStateHandler sets a callback for persona state changes.
+func WithPersonaStateHandler(fn func(*PersonaStateEvent)) Option {
+	return func(c *config) { c.onPersonaState = fn }
+}
+
 // New creates a new Steam CM client.
 func New(opts ...Option) *Client {
 	cfg := config{
@@ -108,6 +117,7 @@ func New(opts ...Option) *Client {
 		OnPacket:        cfg.onPacket,
 		OnFriendMessage: cfg.onFriendMsg,
 		OnRelationship:  cfg.onRelationship,
+		OnPersonaState:  cfg.onPersonaState,
 	}
 }
 
@@ -339,8 +349,8 @@ func (c *Client) readLoop() {
 }
 
 func (c *Client) handlePacket(pkt *Packet) {
-	switch pkt.EMsg {
-	case EMsgMulti:
+	// EMsgMulti is handled recursively and never forwarded to OnPacket.
+	if pkt.EMsg == EMsgMulti {
 		var multi protocol.CMsgMulti
 		if err := proto.Unmarshal(pkt.Body, &multi); err != nil {
 			c.logger.Error("unmarshal Multi", "err", err)
@@ -356,7 +366,11 @@ func (c *Client) handlePacket(pkt *Packet) {
 		for _, sub := range packets {
 			c.handlePacket(sub)
 		}
+		return
+	}
 
+	// Dispatch to type-specific handlers.
+	switch pkt.EMsg {
 	case EMsgClientLoggedOff:
 		c.mu.Lock()
 		c.loggedIn = false
@@ -367,26 +381,20 @@ func (c *Client) handlePacket(pkt *Packet) {
 		} else {
 			c.logger.Warn("logged off by server")
 		}
-		if c.OnPacket != nil {
-			c.OnPacket(pkt)
-		}
 
 	case EMsgClientFriendsList:
 		c.handleFriendsList(pkt)
-		if c.OnPacket != nil {
-			c.OnPacket(pkt)
-		}
+
+	case EMsgClientPersonaState:
+		c.handlePersonaState(pkt)
 
 	case EMsgClientFriendMsgIncoming, EMsgClientFriendMsgEchoToSender:
 		c.handleFriendMsgIncoming(pkt)
-		if c.OnPacket != nil {
-			c.OnPacket(pkt)
-		}
+	}
 
-	default:
-		if c.OnPacket != nil {
-			c.OnPacket(pkt)
-		}
+	// Forward all non-Multi packets to the generic handler.
+	if c.OnPacket != nil {
+		c.OnPacket(pkt)
 	}
 }
 
