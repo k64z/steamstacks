@@ -36,6 +36,12 @@ type Client struct {
 	// OnPacket is called for every decoded packet not handled internally.
 	OnPacket func(*Packet)
 
+	// OnFriendMessage is called for incoming chat messages.
+	OnFriendMessage func(*FriendMessage)
+
+	// OnRelationship is called for friend list / relationship changes.
+	OnRelationship func(*RelationshipEvent)
+
 	mu       sync.Mutex
 	done     chan struct{} // closed on Disconnect
 	wg       sync.WaitGroup
@@ -43,10 +49,12 @@ type Client struct {
 }
 
 type config struct {
-	transport  TransportType
-	httpClient *http.Client
-	logger     *slog.Logger
-	onPacket   func(*Packet)
+	transport      TransportType
+	httpClient     *http.Client
+	logger         *slog.Logger
+	onPacket       func(*Packet)
+	onFriendMsg    func(*FriendMessage)
+	onRelationship func(*RelationshipEvent)
 }
 
 // Option configures a Client.
@@ -72,6 +80,16 @@ func WithPacketHandler(fn func(*Packet)) Option {
 	return func(c *config) { c.onPacket = fn }
 }
 
+// WithFriendMessageHandler sets a callback for incoming friend chat messages.
+func WithFriendMessageHandler(fn func(*FriendMessage)) Option {
+	return func(c *config) { c.onFriendMsg = fn }
+}
+
+// WithRelationshipHandler sets a callback for friend list / relationship changes.
+func WithRelationshipHandler(fn func(*RelationshipEvent)) Option {
+	return func(c *config) { c.onRelationship = fn }
+}
+
 // New creates a new Steam CM client.
 func New(opts ...Option) *Client {
 	cfg := config{
@@ -84,10 +102,12 @@ func New(opts ...Option) *Client {
 	}
 
 	return &Client{
-		transport:  cfg.transport,
-		httpClient: cfg.httpClient,
-		logger:     cfg.logger,
-		OnPacket:   cfg.onPacket,
+		transport:       cfg.transport,
+		httpClient:      cfg.httpClient,
+		logger:          cfg.logger,
+		OnPacket:        cfg.onPacket,
+		OnFriendMessage: cfg.onFriendMsg,
+		OnRelationship:  cfg.onRelationship,
 	}
 }
 
@@ -347,6 +367,18 @@ func (c *Client) handlePacket(pkt *Packet) {
 		} else {
 			c.logger.Warn("logged off by server")
 		}
+		if c.OnPacket != nil {
+			c.OnPacket(pkt)
+		}
+
+	case EMsgClientFriendsList:
+		c.handleFriendsList(pkt)
+		if c.OnPacket != nil {
+			c.OnPacket(pkt)
+		}
+
+	case EMsgClientFriendMsgIncoming, EMsgClientFriendMsgEchoToSender:
+		c.handleFriendMsgIncoming(pkt)
 		if c.OnPacket != nil {
 			c.OnPacket(pkt)
 		}
