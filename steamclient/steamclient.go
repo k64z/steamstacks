@@ -51,10 +51,15 @@ type Client struct {
 	// OnItemNotification is called when new inventory items arrive.
 	OnItemNotification func(*ItemNotification)
 
-	mu       sync.Mutex
-	done     chan struct{} // closed on Disconnect
-	wg       sync.WaitGroup
-	loggedIn bool
+	// OnDisconnect is called when the connection drops unexpectedly.
+	OnDisconnect func(*DisconnectEvent)
+
+	mu             sync.Mutex
+	done           chan struct{} // closed on Disconnect
+	wg             sync.WaitGroup
+	loggedIn       bool
+	closeOnce      sync.Once
+	disconnectOnce sync.Once
 }
 
 type config struct {
@@ -67,6 +72,7 @@ type config struct {
 	onPersonaState      func(*PersonaStateEvent)
 	onTradeNotification func(*TradeNotification)
 	onItemNotification  func(*ItemNotification)
+	onDisconnect        func(*DisconnectEvent)
 }
 
 // Option configures a Client.
@@ -128,6 +134,7 @@ func New(opts ...Option) *Client {
 		OnPersonaState:      cfg.onPersonaState,
 		OnTradeNotification: cfg.onTradeNotification,
 		OnItemNotification:  cfg.onItemNotification,
+		OnDisconnect:        cfg.onDisconnect,
 	}
 }
 
@@ -292,12 +299,16 @@ func (c *Client) Disconnect() error {
 		}, body)
 	}
 
-	close(c.done)
+	c.closeOnce.Do(func() { close(c.done) })
 
 	if c.conn != nil {
 		c.conn.Close()
 	}
 	c.wg.Wait()
+
+	// Reset sync primitives for potential reuse via Reconnect.
+	c.closeOnce = sync.Once{}
+	c.disconnectOnce = sync.Once{}
 
 	c.logger.Info("disconnected")
 	return nil
@@ -344,6 +355,7 @@ func (c *Client) readLoop() {
 				if !errors.Is(err, context.Canceled) {
 					c.logger.Error("read error", "err", err)
 				}
+				c.fireDisconnect(&DisconnectEvent{Err: err})
 				return
 			}
 		}
@@ -382,14 +394,17 @@ func (c *Client) handlePacket(pkt *Packet) {
 	// Dispatch to type-specific handlers.
 	switch pkt.EMsg {
 	case EMsgClientLoggedOff:
-		c.mu.Lock()
-		c.loggedIn = false
-		c.mu.Unlock()
 		var logoff protocol.CMsgClientLoggedOff
+		eresult := int32(2)
 		if err := proto.Unmarshal(pkt.Body, &logoff); err == nil {
-			c.logger.Warn("logged off by server", "eresult", logoff.GetEresult())
-		} else {
-			c.logger.Warn("logged off by server")
+			eresult = logoff.GetEresult()
+		}
+		c.logger.Warn("logged off by server", "eresult", eresult)
+		c.fireDisconnect(&DisconnectEvent{ServerInitiated: true, EResult: eresult})
+		// Close connection — readLoop will exit cleanly on next Read().
+		c.closeOnce.Do(func() { close(c.done) })
+		if c.conn != nil {
+			c.conn.Close()
 		}
 
 	case EMsgClientFriendsList:
@@ -437,13 +452,15 @@ func (c *Client) expectEMsg(target EMsg) <-chan *Packet {
 	return ch
 }
 
-// awaitPacket blocks until a packet arrives on ch or ctx expires.
+// awaitPacket blocks until a packet arrives on ch, ctx expires, or the connection closes.
 func (c *Client) awaitPacket(ctx context.Context, ch <-chan *Packet) (*Packet, error) {
 	select {
 	case pkt := <-ch:
 		return pkt, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	case <-c.done:
+		return nil, ErrDisconnected
 	}
 }
 
