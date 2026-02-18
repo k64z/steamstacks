@@ -8,13 +8,17 @@ import (
 	"strings"
 )
 
+const defaultBaseURL = "https://api.steampowered.com"
+
 type API struct {
 	httpClient  *http.Client
+	baseURL     string
 	accessToken string
 }
 
 type config struct {
 	httpClient *http.Client
+	baseURL    string
 }
 
 type Option func(options *config) error
@@ -29,6 +33,13 @@ func WithHTTPClient(httpClient *http.Client) Option {
 	}
 }
 
+func WithBaseURL(baseURL string) Option {
+	return func(options *config) error {
+		options.baseURL = baseURL
+		return nil
+	}
+}
+
 func New(opts ...Option) (*API, error) {
 	var cfg config
 	for _, opt := range opts {
@@ -38,12 +49,18 @@ func New(opts ...Option) (*API, error) {
 		}
 	}
 
-	a := &API{}
+	a := &API{
+		baseURL: defaultBaseURL,
+	}
 
 	if cfg.httpClient != nil {
 		a.httpClient = cfg.httpClient
 	} else {
 		a.httpClient = http.DefaultClient
+	}
+
+	if cfg.baseURL != "" {
+		a.baseURL = cfg.baseURL
 	}
 
 	return a, nil
@@ -83,6 +100,11 @@ func extractAccessToken(jar http.CookieJar) (string, error) {
 	}
 
 	return "", errors.New("missing steamLoginSecure cookie")
+}
+
+// SetAccessToken sets the access token used to authenticate API requests.
+func (a *API) SetAccessToken(token string) {
+	a.accessToken = token
 }
 
 // DoRequest executes an arbitrary HTTP request using the API's httpClient
