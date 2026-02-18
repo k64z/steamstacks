@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/k64z/steamstacks/protocol"
@@ -53,6 +54,9 @@ type Client struct {
 
 	// OnDisconnect is called when the connection drops unexpectedly.
 	OnDisconnect func(*DisconnectEvent)
+
+	nextJobID   atomic.Uint64
+	pendingJobs map[uint64]chan<- *Packet // protected by mu
 
 	mu             sync.Mutex
 	done           chan struct{} // closed on Disconnect
@@ -391,6 +395,21 @@ func (c *Client) handlePacket(pkt *Packet) {
 		return
 	}
 
+	// Dispatch pending service method responses by job ID.
+	// The response EMsg varies (146, 147, 152) so we match all packets.
+	c.mu.Lock()
+	ch, ok := c.pendingJobs[pkt.Header.GetJobidTarget()]
+	if ok {
+		delete(c.pendingJobs, pkt.Header.GetJobidTarget())
+	}
+	c.mu.Unlock()
+	if ok {
+		select {
+		case ch <- pkt:
+		default:
+		}
+	}
+
 	// Dispatch to type-specific handlers.
 	switch pkt.EMsg {
 	case EMsgClientLoggedOff:
@@ -462,6 +481,49 @@ func (c *Client) awaitPacket(ctx context.Context, ch <-chan *Packet) (*Packet, e
 	case <-c.done:
 		return nil, ErrDisconnected
 	}
+}
+
+// expectJobID registers a one-shot listener for a service method response
+// matched by JobidTarget. The match is handled directly in handlePacket
+// under the mutex, avoiding data races with readLoop.
+func (c *Client) expectJobID(jobID uint64) <-chan *Packet {
+	ch := make(chan *Packet, 1)
+	c.mu.Lock()
+	if c.pendingJobs == nil {
+		c.pendingJobs = make(map[uint64]chan<- *Packet)
+	}
+	c.pendingJobs[jobID] = ch
+	c.mu.Unlock()
+	return ch
+}
+
+// callServiceMethod sends a unified service method request and awaits the
+// matching response, correlated by job ID.
+func (c *Client) callServiceMethod(ctx context.Context, method string, body []byte) (*Packet, error) {
+	jobID := c.nextJobID.Add(1)
+	responseCh := c.expectJobID(jobID)
+	defer func() {
+		c.mu.Lock()
+		delete(c.pendingJobs, jobID)
+		c.mu.Unlock()
+	}()
+
+	hdr := &protocol.CMsgProtoBufHeader{
+		TargetJobName: proto.String(method),
+		JobidSource:   proto.Uint64(jobID),
+	}
+	if err := c.sendPacket(ctx, EMsgServiceMethodCallFromClient, hdr, body); err != nil {
+		return nil, fmt.Errorf("send %s: %w", method, err)
+	}
+
+	pkt, err := c.awaitPacket(ctx, responseCh)
+	if err != nil {
+		return nil, fmt.Errorf("wait for %s response: %w", method, err)
+	}
+	if pkt.Header.GetEresult() != 1 {
+		return pkt, fmt.Errorf("service method %s: eresult=%d", method, pkt.Header.GetEresult())
+	}
+	return pkt, nil
 }
 
 func (c *Client) heartbeatLoop(interval time.Duration) {

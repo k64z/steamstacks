@@ -13,7 +13,10 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
+	"time"
 
+	"github.com/k64z/steamstacks/protocol"
 	"github.com/k64z/steamstacks/steamid"
 )
 
@@ -37,14 +40,49 @@ func (s *Session) GetWebCookies(ctx context.Context) error {
 
 	s.sessionID = mustGenerateSessionID()
 
+	// SteamClient and MobileApp tokens are constructed directly from the access
+	// token obtained during login (PollAuthSessionStatus). Unlike WebBrowser,
+	// no FinalizeLogin roundtrip is needed.
+	//
+	// NOTE: GenerateAccessTokenForApp via the Web API only works for MobileApp.
+	// SteamClient returns EResult 63 (AccountLogonDenied) — the real Steam
+	// desktop client refreshes tokens via CM (Connection Manager), a persistent
+	// binary protocol not available here. When the access token expires (~24h),
+	// a full re-login is required.
 	if s.platformType == PlatformTypeSteamClient || s.platformType == PlatformTypeMobileApp {
-		// TODO: SteamClient's and MobileApp's steamLoginSecure is s.AccessToken
+		if s.AccessToken == "" {
+			return errors.New("access token is required for SteamClient/MobileApp (re-login needed)")
+		}
+
+		exp, err := jwtExpiry(s.AccessToken)
+		if err != nil {
+			return fmt.Errorf("parse access token expiry: %w", err)
+		}
+		if time.Now().After(exp) {
+			return errors.New("access token has expired (re-login needed)")
+		}
+
+		s.setSteamCommunityWebCookies()
+
+		if s.platformType == PlatformTypeMobileApp {
+			s.installAuthTransport(exp)
+		}
+
 		return nil
 	}
 
-	err := s.FinalizeLogin(ctx)
-	if err != nil {
-		return fmt.Errorf("finalize login: %w", err)
+	if err := s.FinalizeLogin(ctx); err != nil {
+		return err
+	}
+
+	// Install authTransport if we have a valid access token from login.
+	// For saved sessions with expired access tokens, FinalizeLogin has
+	// already set cookies via transfer info — requests work, just without
+	// proactive token refresh.
+	if s.AccessToken != "" {
+		if exp, err := jwtExpiry(s.AccessToken); err == nil && time.Now().Before(exp) {
+			s.installAuthTransport(exp)
+		}
 	}
 
 	return nil
@@ -60,7 +98,7 @@ func (s *Session) FinalizeLogin(ctx context.Context) error {
 	w.WriteField("redir", "https://steamcommunity.com/login/home/?goto=")
 	w.Close()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://login.steampowered.com/jwt/finalizelogin", buf)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.loginURL+"/jwt/finalizelogin", buf)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
@@ -138,7 +176,6 @@ func (s *Session) submitTransferInfo(ctx context.Context, transferInfo TransferI
 	}
 
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	// req.AddCookie(&http.Cookie{Name: "sessionid", Value: s.sessionID})
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -151,6 +188,103 @@ func (s *Session) submitTransferInfo(ctx context.Context, transferInfo TransferI
 	}
 
 	return nil
+}
+
+// setSteamCommunityWebCookies populates the cookie jar with sessionid and
+// steamLoginSecure for steamcommunity.com using the current AccessToken.
+func (s *Session) setSteamCommunityWebCookies() {
+	u, _ := url.Parse("https://steamcommunity.com")
+	s.httpClient.Jar.SetCookies(u, []*http.Cookie{
+		{
+			Name:     "sessionid",
+			Value:    s.sessionID,
+			Path:     "/",
+			Secure:   true,
+			HttpOnly: true,
+		},
+		{
+			Name:     "steamLoginSecure",
+			Value:    fmt.Sprintf("%d%%7C%%7C%s", s.SteamID.ToSteamID64(), s.AccessToken),
+			Path:     "/",
+			Secure:   true,
+			HttpOnly: true,
+		},
+	})
+}
+
+// installAuthTransport wraps the HTTP client's transport with an authTransport
+// that automatically refreshes the access token before it expires.
+func (s *Session) installAuthTransport(tokenExpiry time.Time) {
+	// If already installed, just update the expiry
+	if at, ok := s.httpClient.Transport.(*authTransport); ok {
+		at.mu.Lock()
+		at.tokenExpiry = tokenExpiry
+		at.mu.Unlock()
+		return
+	}
+
+	base := s.httpClient.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+
+	s.httpClient.Transport = &authTransport{
+		base:        base,
+		session:     s,
+		tokenExpiry: tokenExpiry,
+	}
+}
+
+// accessTokenFromJar extracts the access token from the steamLoginSecure
+// cookie in the cookie jar for steamcommunity.com.
+func (s *Session) accessTokenFromJar() (string, error) {
+	u, _ := url.Parse("https://steamcommunity.com")
+	for _, c := range s.httpClient.Jar.Cookies(u) {
+		if c.Name == "steamLoginSecure" {
+			parts := strings.Split(c.Value, "%7C%7C")
+			if len(parts) >= 2 {
+				return parts[1], nil
+			}
+		}
+	}
+	return "", errors.New("steamLoginSecure cookie not found")
+}
+
+// refreshAccessToken uses the refresh token to obtain a fresh access token
+// via the GenerateAccessTokenForApp Steam API.
+//
+// NOTE: This only works for MobileApp tokens. WebBrowser tokens get
+// EResult 15 (AccessDenied) and SteamClient tokens get EResult 63
+// (AccountLogonDenied) unless sent over an authenticated CM session.
+// For WebBrowser, authTransport uses FinalizeLogin instead.
+func (s *Session) refreshAccessToken(ctx context.Context) error {
+	sid := s.SteamID.ToSteamID64()
+	resp, err := s.steamAPI.GenerateAccessTokenForApp(ctx, &protocol.CAuthentication_AccessToken_GenerateForApp_Request{
+		RefreshToken: &s.RefreshToken,
+		Steamid:      &sid,
+	})
+	if err != nil {
+		return err
+	}
+	if resp.AccessToken == nil {
+		return errors.New("access token is nil")
+	}
+	s.AccessToken = *resp.AccessToken
+	return nil
+}
+
+// ExpireAuthTransportToken forces the authTransport to treat the current
+// access token as expired. The next request to steamcommunity.com will
+// trigger a proactive token refresh.
+// This is a no-op if authTransport is not installed.
+func (s *Session) ExpireAuthTransportToken() {
+	at, ok := s.httpClient.Transport.(*authTransport)
+	if !ok {
+		return
+	}
+	at.mu.Lock()
+	at.tokenExpiry = time.Time{}
+	at.mu.Unlock()
 }
 
 // mustGenerateSessionID generates a session ID.

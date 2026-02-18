@@ -229,6 +229,45 @@ func (a *API) PollAuthSessionStatus(
 	return result, nil
 }
 
+// GenerateAccessTokenForApp exchanges a refresh token for a fresh access token.
+func (a *API) GenerateAccessTokenForApp(
+	ctx context.Context,
+	req *protocol.CAuthentication_AccessToken_GenerateForApp_Request,
+) (*protocol.CAuthentication_AccessToken_GenerateForApp_Response, error) {
+	if req == nil {
+		return nil, errors.New("invalid request")
+	}
+
+	bodyBytes, contentType, err := buildProtobufPOSTBody(req)
+	if err != nil {
+		return nil, fmt.Errorf("build body: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/IAuthenticationService/GenerateAccessTokenForApp/v1", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", contentType)
+
+	resp, err := a.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.Header.Get("X-Eresult") != "1" {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("eresult %s: %s (body: %s)", resp.Header.Get("X-Eresult"), resp.Header.Get("X-Error_message"), body)
+	}
+
+	result, err := decodeProtoFromHTTPResponse(resp, &protocol.CAuthentication_AccessToken_GenerateForApp_Response{})
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
 // buildProtobufPOSTBody builds POST request body compatible with SteamAPI
 func buildProtobufPOSTBody(msg proto.Message) (body []byte, contentType string, err error) {
 	// TODO:; I think we can return io.Reader instead of []byte

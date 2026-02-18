@@ -45,6 +45,8 @@ type Session struct {
 	language     uint32 // TODO: figure out what codes are these
 
 	pollingInterval time.Duration // INFO: returned by 'BeginAuthSession...', usually 5 seconds
+
+	loginURL string // base URL for login.steampowered.com (overridable for tests)
 }
 
 type config struct {
@@ -86,6 +88,7 @@ func New(opts ...Option) (*Session, error) {
 		platformType: protocol.EAuthTokenPlatformType_k_EAuthTokenPlatformType_WebBrowser,
 		persistence:  protocol.ESessionPersistence_k_ESessionPersistence_Persistent,
 		language:     DefaultLanguageCode,
+		loginURL:     "https://login.steampowered.com",
 	}
 
 	switch cfg.platformType {
@@ -240,6 +243,7 @@ func (s *Session) PollAuthSessionStatus(ctx context.Context) error {
 
 type PersistentSession struct {
 	RefreshToken string          `json:"refresh_token"`
+	AccessToken  string          `json:"access_token,omitempty"`
 	SteamID      steamid.SteamID `json:"steam_id"`
 }
 
@@ -250,6 +254,7 @@ func (s *Session) SaveToFile(filePath string) error {
 
 	data := PersistentSession{
 		RefreshToken: s.RefreshToken,
+		AccessToken:  s.AccessToken,
 		SteamID:      s.SteamID,
 	}
 
@@ -285,6 +290,7 @@ func (s *Session) LoadFromFile(filePath string) error {
 	}
 
 	s.RefreshToken = persistentSession.RefreshToken
+	s.AccessToken = persistentSession.AccessToken
 	s.SteamID = persistentSession.SteamID
 
 	return nil
