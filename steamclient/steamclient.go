@@ -52,6 +52,9 @@ type Client struct {
 	// OnItemNotification is called when new inventory items arrive.
 	OnItemNotification func(*ItemNotification)
 
+	// OnGCMessage is called for incoming Game Coordinator messages.
+	OnGCMessage func(*GCMessage)
+
 	// OnDisconnect is called when the connection drops unexpectedly.
 	OnDisconnect func(*DisconnectEvent)
 
@@ -76,6 +79,7 @@ type config struct {
 	onPersonaState      func(*PersonaStateEvent)
 	onTradeNotification func(*TradeNotification)
 	onItemNotification  func(*ItemNotification)
+	onGCMessage         func(*GCMessage)
 	onDisconnect        func(*DisconnectEvent)
 }
 
@@ -136,10 +140,17 @@ func New(opts ...Option) *Client {
 		OnFriendMessage:     cfg.onFriendMsg,
 		OnRelationship:      cfg.onRelationship,
 		OnPersonaState:      cfg.onPersonaState,
+		OnGCMessage:         cfg.onGCMessage,
 		OnTradeNotification: cfg.onTradeNotification,
 		OnItemNotification:  cfg.onItemNotification,
 		OnDisconnect:        cfg.onDisconnect,
 	}
+}
+
+// SetConn sets the underlying connection. This is useful for testing with
+// mock connections from external packages.
+func (c *Client) SetConn(conn Connection) {
+	c.conn = conn
 }
 
 // Connect discovers CM servers, dials one, and prepares the connection.
@@ -440,6 +451,9 @@ func (c *Client) handlePacket(pkt *Packet) {
 
 	case EMsgClientItemAnnouncements:
 		c.handleItemAnnouncements(pkt)
+
+	case EMsgClientFromGC:
+		c.handleGCMessage(pkt)
 	}
 
 	// Forward all non-Multi packets to the generic handler.
