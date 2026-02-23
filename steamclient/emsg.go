@@ -33,6 +33,8 @@ const (
 	EMsgClientFriendMsgEchoToSender    EMsg = 5578
 	EMsgClientPersonaChangeResponse    EMsg = 5584
 	EMsgClientUserNotifications        EMsg = 5599
+	EMsgClientToGC                     EMsg = 5452
+	EMsgClientFromGC                   EMsg = 5453
 	EMsgServiceMethodCallFromClient    EMsg = 151
 	EMsgServiceMethodSendToClient      EMsg = 152
 	EMsgClientHello                    EMsg = 9805
@@ -69,6 +71,8 @@ var emsgNames = map[EMsg]string{
 	EMsgClientFriendMsgEchoToSender:    "ClientFriendMsgEchoToSender",
 	EMsgClientPersonaChangeResponse:    "ClientPersonaChangeResponse",
 	EMsgClientUserNotifications:        "ClientUserNotifications",
+	EMsgClientToGC:                     "ClientToGC",
+	EMsgClientFromGC:                   "ClientFromGC",
 	EMsgServiceMethodCallFromClient:    "ServiceMethodCallFromClient",
 	EMsgServiceMethodSendToClient:      "ServiceMethodSendToClient",
 	EMsgClientHello:                    "ClientHello",
