@@ -54,10 +54,11 @@ func (c *Client) Reconnect(ctx context.Context) error {
 	// Reset sync primitives for new connection cycle.
 	c.closeOnce = sync.Once{}
 	c.disconnectOnce = sync.Once{}
+	c.done = make(chan struct{})
 	c.mu.Lock()
 	c.loggedIn = false
 	c.mu.Unlock()
 
-	// Establish new connection (new c.done, new readLoop).
+	// Establish new connection (overwrites c.done, starts new readLoop).
 	return c.Connect(ctx)
 }
