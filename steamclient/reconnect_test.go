@@ -2,6 +2,8 @@ package steamclient
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -115,6 +117,37 @@ func TestLoggedOffFiresDisconnect(t *testing.T) {
 		t.Fatal("OnDisconnect was not called within 1s")
 	}
 }
+
+func TestReconnectAfterFailedConnect(t *testing.T) {
+	// Simulate a client with an active connection whose Reconnect fails
+	// (e.g. TLS timeout during Steam outage). A second Reconnect must not
+	// panic with "close of closed channel".
+	mc := &mockConn{writeCh: make(chan []byte, 1)}
+	c := New(WithHTTPClient(&http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("connect timeout")
+		}),
+	}))
+	c.conn = mc
+	c.done = make(chan struct{})
+
+	ctx := context.Background()
+
+	// First Reconnect: Connect fails because DiscoverServers can't reach Steam.
+	if err := c.Reconnect(ctx); err == nil {
+		t.Fatal("expected Reconnect to fail")
+	}
+
+	// Second Reconnect: must not panic.
+	if err := c.Reconnect(ctx); err == nil {
+		t.Fatal("expected second Reconnect to fail")
+	}
+}
+
+// roundTripFunc adapts a function to http.RoundTripper.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 func TestAwaitPacketReturnsOnDone(t *testing.T) {
 	c := New()

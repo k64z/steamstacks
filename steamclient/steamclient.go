@@ -553,7 +553,10 @@ func (c *Client) heartbeatLoop(interval time.Duration) {
 		case <-ticker.C:
 			body, _ := proto.Marshal(&protocol.CMsgClientHeartBeat{})
 			if err := c.sendPacket(context.Background(), EMsgClientHeartBeat, nil, body); err != nil {
-				c.logger.Error("heartbeat failed", "err", err)
+				c.logger.Error("heartbeat failed, closing connection", "err", err)
+				if c.conn != nil {
+					c.conn.Close()
+				}
 				return
 			}
 			c.logger.Debug("heartbeat sent")
