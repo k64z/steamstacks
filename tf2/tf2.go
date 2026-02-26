@@ -14,9 +14,10 @@ const AppID = 440
 
 // GC message types for the TF2 Game Coordinator.
 const (
-	MsgClientWelcome = 4004
-	MsgClientHello   = 4006
-	MsgClientGoodbye = 4008
+	MsgClientWelcome  = 4004
+	MsgClientHello    = 4006
+	MsgClientGoodbye  = 4008
+	MsgUseItemRequest = 1025
 )
 
 // WelcomeEvent is fired when the TF2 GC accepts our session.
@@ -138,6 +139,15 @@ func (c *Client) IsConnected() bool {
 // SendMessage sends a protobuf message to the TF2 GC.
 func (c *Client) SendMessage(ctx context.Context, msgType uint32, body []byte) error {
 	return c.cm.SendGCMessage(ctx, AppID, msgType, true, body)
+}
+
+// UseItem sends a CMsgUseItem to the TF2 GC, which triggers use of the
+// specified item (opening crates, consuming items, applying tools, etc.).
+func (c *Client) UseItem(ctx context.Context, itemID uint64) error {
+	var body []byte
+	body = protowire.AppendTag(body, 1, protowire.VarintType)
+	body = protowire.AppendVarint(body, itemID)
+	return c.SendMessage(ctx, MsgUseItemRequest, body)
 }
 
 func (c *Client) handleGCMessage(msg *steamclient.GCMessage) {
