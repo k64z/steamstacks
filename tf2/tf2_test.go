@@ -2,10 +2,14 @@ package tf2
 
 import (
 	"context"
+	"encoding/binary"
 	"testing"
 	"time"
 
+	"github.com/k64z/steamstacks/protocol"
 	"github.com/k64z/steamstacks/steamclient"
+	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestWelcomeStopsHelloAndSetsConnected(t *testing.T) {
@@ -206,6 +210,73 @@ func TestConnectWhileConnecting(t *testing.T) {
 	}
 
 	tc.Disconnect()
+}
+
+func TestUseItem(t *testing.T) {
+	mc := &mockConn{writeCh: make(chan []byte, 10)}
+	cm := steamclient.New()
+	cm.SetConn(mc)
+
+	tc := New(cm)
+
+	const itemID uint64 = 12345
+	if err := tc.UseItem(context.Background(), itemID); err != nil {
+		t.Fatalf("UseItem: %v", err)
+	}
+
+	raw := <-mc.writeCh
+
+	// Decode outer CM packet: [uint32 EMsg|ProtoMask] [uint32 hdrLen] [header] [body]
+	if len(raw) < 8 {
+		t.Fatalf("packet too short: %d bytes", len(raw))
+	}
+	emsg := binary.LittleEndian.Uint32(raw[:4])
+	if emsg != uint32(steamclient.EMsgClientToGC)|steamclient.ProtoMask {
+		t.Fatalf("EMsg = %#x, want EMsgClientToGC|ProtoMask (%#x)", emsg, uint32(steamclient.EMsgClientToGC)|steamclient.ProtoMask)
+	}
+	hdrLen := binary.LittleEndian.Uint32(raw[4:8])
+	cmBody := raw[8+hdrLen:]
+
+	// Unmarshal CMsgGCClient from the CM body.
+	var gcClient protocol.CMsgGCClient
+	if err := proto.Unmarshal(cmBody, &gcClient); err != nil {
+		t.Fatalf("unmarshal CMsgGCClient: %v", err)
+	}
+	if gcClient.GetAppid() != AppID {
+		t.Errorf("AppID = %d, want %d", gcClient.GetAppid(), AppID)
+	}
+	wantMsgType := uint32(MsgUseItemRequest) | steamclient.ProtoMask
+	if gcClient.GetMsgtype() != wantMsgType {
+		t.Errorf("MsgType = %#x, want %#x", gcClient.GetMsgtype(), wantMsgType)
+	}
+
+	// Decode inner GC payload: [uint32 msgType|ProtoMask] [uint32 gcHdrLen] [gcHdr] [body]
+	payload := gcClient.GetPayload()
+	if len(payload) < 8 {
+		t.Fatalf("GC payload too short: %d bytes", len(payload))
+	}
+	gcMsgType := binary.LittleEndian.Uint32(payload[:4])
+	if gcMsgType != uint32(MsgUseItemRequest)|steamclient.ProtoMask {
+		t.Errorf("GC inner MsgType = %#x, want %#x", gcMsgType, uint32(MsgUseItemRequest)|steamclient.ProtoMask)
+	}
+	gcHdrLen := binary.LittleEndian.Uint32(payload[4:8])
+	gcBody := payload[8+gcHdrLen:]
+
+	// Verify protowire-encoded item_id (field 1, varint) = 12345.
+	fieldNum, wireType, n := protowire.ConsumeTag(gcBody)
+	if n < 0 {
+		t.Fatalf("protowire.ConsumeTag failed")
+	}
+	if fieldNum != 1 || wireType != protowire.VarintType {
+		t.Fatalf("tag = field %d wire %d, want field 1 varint", fieldNum, wireType)
+	}
+	val, vn := protowire.ConsumeVarint(gcBody[n:])
+	if vn < 0 {
+		t.Fatalf("protowire.ConsumeVarint failed")
+	}
+	if val != itemID {
+		t.Errorf("item_id = %d, want %d", val, itemID)
+	}
 }
 
 // --- test helpers ---
