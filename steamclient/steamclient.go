@@ -291,6 +291,11 @@ func (c *Client) Login(ctx context.Context, accountName, refreshToken string, si
 	return nil
 }
 
+// SteamID returns the SteamID assigned to this client after login.
+func (c *Client) SteamID() steamid.SteamID {
+	return c.steamID
+}
+
 // Disconnect cleanly disconnects from the CM server.
 func (c *Client) Disconnect() error {
 	c.mu.Lock()

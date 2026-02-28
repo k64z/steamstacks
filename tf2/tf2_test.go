@@ -23,8 +23,10 @@ func TestWelcomeStopsHelloAndSetsConnected(t *testing.T) {
 	cm.SetConn(mc)
 
 	var connected bool
+	var gotEvent *WelcomeEvent
 	tc := New(cm, WithConnectedHandler(func(e *WelcomeEvent) {
 		connected = true
+		gotEvent = e
 	}))
 
 	if err := tc.Connect(context.Background()); err != nil {
@@ -33,12 +35,18 @@ func TestWelcomeStopsHelloAndSetsConnected(t *testing.T) {
 	// Drain the initial hello send.
 	<-mc.writeCh
 
-	// Simulate welcome from GC.
+	// Simulate welcome from GC with version + txn_country_code.
+	var welcomeBody []byte
+	welcomeBody = protowire.AppendTag(welcomeBody, 1, protowire.VarintType)
+	welcomeBody = protowire.AppendVarint(welcomeBody, 1500)
+	welcomeBody = protowire.AppendTag(welcomeBody, 3, protowire.BytesType)
+	welcomeBody = protowire.AppendString(welcomeBody, "US")
+
 	cm.OnGCMessage(&steamclient.GCMessage{
 		AppID:   AppID,
 		MsgType: MsgClientWelcome,
 		IsProto: true,
-		Body:    nil,
+		Body:    welcomeBody,
 	})
 
 	if !tc.IsConnected() {
@@ -46,6 +54,15 @@ func TestWelcomeStopsHelloAndSetsConnected(t *testing.T) {
 	}
 	if !connected {
 		t.Error("OnConnected was not called")
+	}
+	if gotEvent == nil {
+		t.Fatal("WelcomeEvent is nil")
+	}
+	if gotEvent.Version != 1500 {
+		t.Errorf("WelcomeEvent.Version = %d, want 1500", gotEvent.Version)
+	}
+	if gotEvent.TxnCountryCode != "US" {
+		t.Errorf("WelcomeEvent.TxnCountryCode = %q, want %q", gotEvent.TxnCountryCode, "US")
 	}
 }
 
