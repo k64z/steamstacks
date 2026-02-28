@@ -21,10 +21,15 @@ const (
 )
 
 // WelcomeEvent is fired when the TF2 GC accepts our session.
-type WelcomeEvent struct{}
+type WelcomeEvent struct {
+	Version        uint32
+	TxnCountryCode string
+}
 
 // GoodbyeEvent is fired when the TF2 GC ends our session.
-type GoodbyeEvent struct{}
+type GoodbyeEvent struct {
+	Reason uint32
+}
 
 // Client manages a session with the TF2 Game Coordinator.
 type Client struct {
@@ -35,16 +40,30 @@ type Client struct {
 	OnDisconnected func(*GoodbyeEvent)
 	OnGCMessage    func(*steamclient.GCMessage)
 
+	OnBackpackLoaded func([]*Item)
+	OnAccountLoaded  func(*Account)
+	OnItemAcquired   func(*Item)
+	OnItemChanged    func(old, new_ *Item)
+	OnItemRemoved    func(*Item)
+	OnAccountUpdate  func(*Account)
+
 	mu        sync.Mutex
 	connected bool
 	helloStop chan struct{}
+	cache     *soCache
 }
 
 type config struct {
-	logger         *slog.Logger
-	onConnected    func(*WelcomeEvent)
-	onDisconnected func(*GoodbyeEvent)
-	onGCMessage    func(*steamclient.GCMessage)
+	logger           *slog.Logger
+	onConnected      func(*WelcomeEvent)
+	onDisconnected   func(*GoodbyeEvent)
+	onGCMessage      func(*steamclient.GCMessage)
+	onBackpackLoaded func([]*Item)
+	onAccountLoaded  func(*Account)
+	onItemAcquired   func(*Item)
+	onItemChanged    func(old, new_ *Item)
+	onItemRemoved    func(*Item)
+	onAccountUpdate  func(*Account)
 }
 
 // Option configures a TF2 Client.
@@ -70,6 +89,36 @@ func WithGCMessageHandler(fn func(*steamclient.GCMessage)) Option {
 	return func(c *config) { c.onGCMessage = fn }
 }
 
+// WithBackpackLoadedHandler sets a callback for when the backpack is loaded from the SO cache.
+func WithBackpackLoadedHandler(fn func([]*Item)) Option {
+	return func(c *config) { c.onBackpackLoaded = fn }
+}
+
+// WithAccountLoadedHandler sets a callback for when account metadata is loaded from the SO cache.
+func WithAccountLoadedHandler(fn func(*Account)) Option {
+	return func(c *config) { c.onAccountLoaded = fn }
+}
+
+// WithItemAcquiredHandler sets a callback for when a new item is added to the backpack.
+func WithItemAcquiredHandler(fn func(*Item)) Option {
+	return func(c *config) { c.onItemAcquired = fn }
+}
+
+// WithItemChangedHandler sets a callback for when an existing item is updated.
+func WithItemChangedHandler(fn func(old, new_ *Item)) Option {
+	return func(c *config) { c.onItemChanged = fn }
+}
+
+// WithItemRemovedHandler sets a callback for when an item is removed from the backpack.
+func WithItemRemovedHandler(fn func(*Item)) Option {
+	return func(c *config) { c.onItemRemoved = fn }
+}
+
+// WithAccountUpdateHandler sets a callback for when account metadata is updated.
+func WithAccountUpdateHandler(fn func(*Account)) Option {
+	return func(c *config) { c.onAccountUpdate = fn }
+}
+
 // New creates a new TF2 GC client. It chains onto the CM client's OnGCMessage
 // callback, filtering for AppID 440 and forwarding non-TF2 messages to any
 // previously installed handler.
@@ -82,11 +131,18 @@ func New(cm *steamclient.Client, opts ...Option) *Client {
 	}
 
 	c := &Client{
-		cm:             cm,
-		logger:         cfg.logger,
-		OnConnected:    cfg.onConnected,
-		OnDisconnected: cfg.onDisconnected,
-		OnGCMessage:    cfg.onGCMessage,
+		cm:               cm,
+		logger:           cfg.logger,
+		OnConnected:      cfg.onConnected,
+		OnDisconnected:   cfg.onDisconnected,
+		OnGCMessage:      cfg.onGCMessage,
+		OnBackpackLoaded: cfg.onBackpackLoaded,
+		OnAccountLoaded:  cfg.onAccountLoaded,
+		OnItemAcquired:   cfg.onItemAcquired,
+		OnItemChanged:    cfg.onItemChanged,
+		OnItemRemoved:    cfg.onItemRemoved,
+		OnAccountUpdate:  cfg.onAccountUpdate,
+		cache:            newSOCache(),
 	}
 
 	prev := cm.OnGCMessage
@@ -123,6 +179,7 @@ func (c *Client) Disconnect() {
 	defer c.mu.Unlock()
 
 	c.connected = false
+	c.cache.reset()
 	if c.helloStop != nil {
 		close(c.helloStop)
 		c.helloStop = nil
@@ -150,10 +207,38 @@ func (c *Client) UseItem(ctx context.Context, itemID uint64) error {
 	return c.SendMessage(ctx, MsgUseItemRequest, body)
 }
 
+// Backpack returns a snapshot copy of all backpack items.
+func (c *Client) Backpack() []*Item {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	items := make([]*Item, 0, len(c.cache.items))
+	for _, it := range c.cache.items {
+		items = append(items, it)
+	}
+	return items
+}
+
+// BackpackItem returns a single item by ID, or nil if not found.
+func (c *Client) BackpackItem(id uint64) *Item {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cache.items[id]
+}
+
+// AccountInfo returns the current account metadata, or nil if not yet loaded.
+func (c *Client) AccountInfo() *Account {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cache.account
+}
+
 func (c *Client) handleGCMessage(msg *steamclient.GCMessage) {
 	switch msg.MsgType {
 	case MsgClientWelcome:
+		ev := parseWelcome(msg.Body)
+
 		c.mu.Lock()
+		c.cache.reset()
 		c.connected = true
 		if c.helloStop != nil {
 			close(c.helloStop)
@@ -161,26 +246,111 @@ func (c *Client) handleGCMessage(msg *steamclient.GCMessage) {
 		}
 		c.mu.Unlock()
 
-		c.logger.Info("tf2 GC session established")
+		c.logger.Info("tf2 GC session established", "version", ev.Version)
 		if c.OnConnected != nil {
-			c.OnConnected(&WelcomeEvent{})
+			c.OnConnected(ev)
 		}
 
 	case MsgClientGoodbye:
+		ev := parseGoodbye(msg.Body)
+
 		c.mu.Lock()
 		c.connected = false
+		c.cache.reset()
 		c.mu.Unlock()
 
-		c.logger.Info("tf2 GC session ended")
+		c.logger.Info("tf2 GC session ended", "reason", ev.Reason)
 		if c.OnDisconnected != nil {
-			c.OnDisconnected(&GoodbyeEvent{})
+			c.OnDisconnected(ev)
 		}
+
+	case MsgSOCacheSubscriptionCheck:
+		c.handleSOCacheSubscriptionCheck()
+	case MsgSOCacheSubscribed:
+		c.handleSOCacheSubscribed(msg.Body)
+	case MsgSOCreate:
+		c.handleSOCreate(msg.Body)
+	case MsgSOUpdate:
+		c.handleSOUpdate(msg.Body)
+	case MsgSODestroy:
+		c.handleSODestroy(msg.Body)
+	case MsgSOUpdateMultiple:
+		c.handleSOUpdateMultiple(msg.Body)
 
 	default:
 		if c.OnGCMessage != nil {
 			c.OnGCMessage(msg)
 		}
 	}
+}
+
+func parseWelcome(b []byte) *WelcomeEvent {
+	ev := &WelcomeEvent{}
+	for len(b) > 0 {
+		num, wtype, n := protowire.ConsumeTag(b)
+		if n < 0 {
+			break
+		}
+		b = b[n:]
+
+		switch wtype {
+		case protowire.VarintType:
+			v, n := protowire.ConsumeVarint(b)
+			if n < 0 {
+				return ev
+			}
+			b = b[n:]
+			if num == 1 {
+				ev.Version = uint32(v)
+			}
+		case protowire.BytesType:
+			v, n := protowire.ConsumeBytes(b)
+			if n < 0 {
+				return ev
+			}
+			b = b[n:]
+			if num == 3 {
+				ev.TxnCountryCode = string(v)
+			}
+		default:
+			n := protowire.ConsumeFieldValue(num, wtype, b)
+			if n < 0 {
+				return ev
+			}
+			b = b[n:]
+		}
+	}
+	return ev
+}
+
+func parseGoodbye(b []byte) *GoodbyeEvent {
+	ev := &GoodbyeEvent{}
+	for len(b) > 0 {
+		num, wtype, n := protowire.ConsumeTag(b)
+		if n < 0 {
+			break
+		}
+		b = b[n:]
+
+		switch wtype {
+		case protowire.VarintType:
+			v, n := protowire.ConsumeVarint(b)
+			if n < 0 {
+				return ev
+			}
+			b = b[n:]
+			if num == 1 {
+				ev.Reason = uint32(v)
+			}
+		default:
+			n := protowire.ConsumeFieldValue(num, wtype, b)
+			if n < 0 {
+				return ev
+			}
+			b = b[n:]
+		}
+	}
+	return ev
 }
 
 func (c *Client) sendHello(ctx context.Context) error {
