@@ -2,6 +2,7 @@ package tf2
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -18,6 +19,8 @@ const (
 	MsgClientHello    = 4006
 	MsgClientGoodbye  = 4008
 	MsgUseItemRequest = 1025
+	MsgCraft          = 1002
+	MsgCraftResponse  = 1003
 )
 
 // WelcomeEvent is fired when the TF2 GC accepts our session.
@@ -29,6 +32,12 @@ type WelcomeEvent struct {
 // GoodbyeEvent is fired when the TF2 GC ends our session.
 type GoodbyeEvent struct {
 	Reason uint32
+}
+
+// CraftEvent is fired when the TF2 GC responds to a craft request.
+type CraftEvent struct {
+	Recipe  int16
+	ItemIDs []uint64
 }
 
 // Client manages a session with the TF2 Game Coordinator.
@@ -46,6 +55,7 @@ type Client struct {
 	OnItemChanged    func(old, new_ *Item)
 	OnItemRemoved    func(*Item)
 	OnAccountUpdate  func(*Account)
+	OnCraftCompleted func(*CraftEvent)
 
 	mu        sync.Mutex
 	connected bool
@@ -64,6 +74,7 @@ type config struct {
 	onItemChanged    func(old, new_ *Item)
 	onItemRemoved    func(*Item)
 	onAccountUpdate  func(*Account)
+	onCraftCompleted func(*CraftEvent)
 }
 
 // Option configures a TF2 Client.
@@ -119,6 +130,11 @@ func WithAccountUpdateHandler(fn func(*Account)) Option {
 	return func(c *config) { c.onAccountUpdate = fn }
 }
 
+// WithCraftCompletedHandler sets a callback for when a craft response is received.
+func WithCraftCompletedHandler(fn func(*CraftEvent)) Option {
+	return func(c *config) { c.onCraftCompleted = fn }
+}
+
 // New creates a new TF2 GC client. It chains onto the CM client's OnGCMessage
 // callback, filtering for AppID 440 and forwarding non-TF2 messages to any
 // previously installed handler.
@@ -142,6 +158,7 @@ func New(cm *steamclient.Client, opts ...Option) *Client {
 		OnItemChanged:    cfg.onItemChanged,
 		OnItemRemoved:    cfg.onItemRemoved,
 		OnAccountUpdate:  cfg.onAccountUpdate,
+		OnCraftCompleted: cfg.onCraftCompleted,
 		cache:            newSOCache(),
 	}
 
@@ -205,6 +222,23 @@ func (c *Client) UseItem(ctx context.Context, itemID uint64) error {
 	body = protowire.AppendTag(body, 1, protowire.VarintType)
 	body = protowire.AppendVarint(body, itemID)
 	return c.SendMessage(ctx, MsgUseItemRequest, body)
+}
+
+// sendRawMessage sends a non-protobuf (raw binary) message to the TF2 GC.
+func (c *Client) sendRawMessage(ctx context.Context, msgType uint32, body []byte) error {
+	return c.cm.SendGCMessage(ctx, AppID, msgType, false, body)
+}
+
+// Craft sends a craft request to the TF2 GC. The recipe is typically -2 for
+// wildcard crafting. Items is the list of item IDs to use as ingredients.
+func (c *Client) Craft(ctx context.Context, items []uint64, recipe int16) error {
+	body := make([]byte, 4+8*len(items))
+	binary.LittleEndian.PutUint16(body[0:2], uint16(recipe))
+	binary.LittleEndian.PutUint16(body[2:4], uint16(len(items)))
+	for i, id := range items {
+		binary.LittleEndian.PutUint64(body[4+8*i:], id)
+	}
+	return c.sendRawMessage(ctx, MsgCraft, body)
 }
 
 // Backpack returns a snapshot copy of all backpack items.
@@ -276,11 +310,37 @@ func (c *Client) handleGCMessage(msg *steamclient.GCMessage) {
 		c.handleSODestroy(msg.Body)
 	case MsgSOUpdateMultiple:
 		c.handleSOUpdateMultiple(msg.Body)
+	case MsgCraftResponse:
+		c.handleCraftResponse(msg.Body)
 
 	default:
 		if c.OnGCMessage != nil {
 			c.OnGCMessage(msg)
 		}
+	}
+}
+
+func (c *Client) handleCraftResponse(b []byte) {
+	// Wire format: int16le blueprint, uint32le unknown, uint16le id_count, uint64le[] item_ids
+	if len(b) < 8 {
+		c.logger.Warn("tf2: craft response too short", "len", len(b))
+		return
+	}
+	recipe := int16(binary.LittleEndian.Uint16(b[0:2]))
+	// b[2:6] is an unknown uint32 (always 0), skip it.
+	idCount := binary.LittleEndian.Uint16(b[6:8])
+
+	ids := make([]uint64, 0, idCount)
+	data := b[8:]
+	for i := 0; i < int(idCount) && len(data) >= 8; i++ {
+		ids = append(ids, binary.LittleEndian.Uint64(data[:8]))
+		data = data[8:]
+	}
+
+	ev := &CraftEvent{Recipe: recipe, ItemIDs: ids}
+	c.logger.Info("tf2: craft response", "recipe", ev.Recipe, "items", len(ev.ItemIDs))
+	if c.OnCraftCompleted != nil {
+		c.OnCraftCompleted(ev)
 	}
 }
 

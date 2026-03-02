@@ -296,6 +296,118 @@ func TestUseItem(t *testing.T) {
 	}
 }
 
+func TestCraft(t *testing.T) {
+	mc := &mockConn{writeCh: make(chan []byte, 10)}
+	cm := steamclient.New()
+	cm.SetConn(mc)
+
+	tc := New(cm)
+
+	items := []uint64{111, 222}
+	var recipe int16 = -2
+	if err := tc.Craft(context.Background(), items, recipe); err != nil {
+		t.Fatalf("Craft: %v", err)
+	}
+
+	raw := <-mc.writeCh
+
+	// Decode outer CM packet.
+	if len(raw) < 8 {
+		t.Fatalf("packet too short: %d bytes", len(raw))
+	}
+	emsg := binary.LittleEndian.Uint32(raw[:4])
+	if emsg != uint32(steamclient.EMsgClientToGC)|steamclient.ProtoMask {
+		t.Fatalf("EMsg = %#x, want EMsgClientToGC|ProtoMask", emsg)
+	}
+	hdrLen := binary.LittleEndian.Uint32(raw[4:8])
+	cmBody := raw[8+hdrLen:]
+
+	// Unmarshal CMsgGCClient.
+	var gcClient protocol.CMsgGCClient
+	if err := proto.Unmarshal(cmBody, &gcClient); err != nil {
+		t.Fatalf("unmarshal CMsgGCClient: %v", err)
+	}
+	if gcClient.GetAppid() != AppID {
+		t.Errorf("AppID = %d, want %d", gcClient.GetAppid(), AppID)
+	}
+	// Non-proto: msgtype should NOT have ProtoMask set.
+	if gcClient.GetMsgtype() != MsgCraft {
+		t.Errorf("MsgType = %#x, want %#x", gcClient.GetMsgtype(), uint32(MsgCraft))
+	}
+
+	// Decode inner GC payload (binary header: version(2) + targetJob(8) + sourceJob(8) = 18 bytes).
+	payload := gcClient.GetPayload()
+	if len(payload) < 18 {
+		t.Fatalf("GC payload too short: %d bytes", len(payload))
+	}
+	gcVersion := binary.LittleEndian.Uint16(payload[:2])
+	if gcVersion != 1 {
+		t.Errorf("GC binary header version = %d, want 1", gcVersion)
+	}
+	gcBody := payload[18:]
+
+	// Verify binary layout: int16le recipe, int16le count, uint64le[] items.
+	if len(gcBody) < 4+8*len(items) {
+		t.Fatalf("craft body too short: %d bytes", len(gcBody))
+	}
+	gotRecipe := int16(binary.LittleEndian.Uint16(gcBody[0:2]))
+	if gotRecipe != recipe {
+		t.Errorf("recipe = %d, want %d", gotRecipe, recipe)
+	}
+	gotCount := binary.LittleEndian.Uint16(gcBody[2:4])
+	if gotCount != uint16(len(items)) {
+		t.Errorf("item_count = %d, want %d", gotCount, len(items))
+	}
+	for i, want := range items {
+		got := binary.LittleEndian.Uint64(gcBody[4+8*i:])
+		if got != want {
+			t.Errorf("item[%d] = %d, want %d", i, got, want)
+		}
+	}
+}
+
+func TestCraftResponse(t *testing.T) {
+	cm := steamclient.New()
+
+	var gotEvent *CraftEvent
+	tc := New(cm, WithCraftCompletedHandler(func(e *CraftEvent) {
+		gotEvent = e
+	}))
+	_ = tc
+
+	// Build a raw binary CraftResponse body:
+	// int16le blueprint, uint32le unknown, uint16le id_count, uint64le[] item_ids
+	var body []byte
+	body = binary.LittleEndian.AppendUint16(body, uint16(int16(5))) // recipe 5
+	body = binary.LittleEndian.AppendUint32(body, 0)               // unknown
+	body = binary.LittleEndian.AppendUint16(body, 2)               // 2 items
+	body = binary.LittleEndian.AppendUint64(body, 9001)
+	body = binary.LittleEndian.AppendUint64(body, 9002)
+
+	cm.OnGCMessage(&steamclient.GCMessage{
+		AppID:   AppID,
+		MsgType: MsgCraftResponse,
+		IsProto: false,
+		Body:    body,
+	})
+
+	if gotEvent == nil {
+		t.Fatal("OnCraftCompleted was not called")
+	}
+	if gotEvent.Recipe != 5 {
+		t.Errorf("Recipe = %d, want 5", gotEvent.Recipe)
+	}
+	if len(gotEvent.ItemIDs) != 2 {
+		t.Fatalf("ItemIDs len = %d, want 2", len(gotEvent.ItemIDs))
+	}
+	if gotEvent.ItemIDs[0] != 9001 {
+		t.Errorf("ItemIDs[0] = %d, want 9001", gotEvent.ItemIDs[0])
+	}
+	if gotEvent.ItemIDs[1] != 9002 {
+		t.Errorf("ItemIDs[1] = %d, want 9002", gotEvent.ItemIDs[1])
+	}
+}
+
 // --- test helpers ---
 
 type mockConn struct {
