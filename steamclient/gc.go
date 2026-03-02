@@ -85,7 +85,7 @@ func (c *Client) handleGCMessage(pkt *Packet) {
 //
 // Binary format:
 //
-//	[msgType : u32 LE][version=1 : u16 LE][targetJob : u64 LE][sourceJob : u64 LE][body]
+//	[version=1 : u16 LE][targetJob : u64 LE][sourceJob : u64 LE][body]
 func encodeGCPayload(msg *GCMessage) ([]byte, error) {
 	if msg.IsProto {
 		return encodeGCProtoPayload(msg)
@@ -109,25 +109,24 @@ func encodeGCProtoPayload(msg *GCMessage) ([]byte, error) {
 }
 
 func encodeGCBinaryPayload(msg *GCMessage) []byte {
-	// header: msgType(4) + version(2) + targetJob(8) + sourceJob(8) = 22 bytes
-	buf := make([]byte, 22+len(msg.Body))
-	binary.LittleEndian.PutUint32(buf[0:4], msg.MsgType)
-	binary.LittleEndian.PutUint16(buf[4:6], 1) // version
-	binary.LittleEndian.PutUint64(buf[6:14], 0xFFFFFFFFFFFFFFFF)  // targetJob
-	binary.LittleEndian.PutUint64(buf[14:22], 0xFFFFFFFFFFFFFFFF) // sourceJob
-	copy(buf[22:], msg.Body)
+	// header: version(2) + targetJob(8) + sourceJob(8) = 18 bytes
+	// Note: unlike proto payloads, binary payloads do NOT include the msgType
+	// in the inner header. The msgType is carried only in CMsgGCClient.Msgtype.
+	buf := make([]byte, 18+len(msg.Body))
+	binary.LittleEndian.PutUint16(buf[0:2], 1) // version
+	binary.LittleEndian.PutUint64(buf[2:10], 0xFFFFFFFFFFFFFFFF)  // targetJob
+	binary.LittleEndian.PutUint64(buf[10:18], 0xFFFFFFFFFFFFFFFF) // sourceJob
+	copy(buf[18:], msg.Body)
 	return buf
 }
 
 // decodeGCPayload parses a GC payload, strips the GC header, and returns the body.
+// The rawMsgType from CMsgGCClient.Msgtype determines whether the inner payload
+// uses proto or binary framing: proto payloads include the msgType in the inner
+// header, while binary payloads do not.
 func decodeGCPayload(appID, rawMsgType uint32, payload []byte) (*GCMessage, error) {
-	if len(payload) < 4 {
-		return nil, fmt.Errorf("GC payload too short: %d bytes", len(payload))
-	}
-
-	innerMsgType := binary.LittleEndian.Uint32(payload[0:4])
-	isProto := innerMsgType&ProtoMask != 0
-	msgType := innerMsgType &^ ProtoMask
+	isProto := rawMsgType&ProtoMask != 0
+	msgType := rawMsgType &^ ProtoMask
 
 	if isProto {
 		return decodeGCProtoPayload(appID, msgType, payload)
@@ -155,8 +154,8 @@ func decodeGCProtoPayload(appID, msgType uint32, payload []byte) (*GCMessage, er
 }
 
 func decodeGCBinaryPayload(appID, msgType uint32, payload []byte) (*GCMessage, error) {
-	// binary header: msgType(4) + version(2) + targetJob(8) + sourceJob(8) = 22 bytes
-	const hdrSize = 22
+	// binary header: version(2) + targetJob(8) + sourceJob(8) = 18 bytes
+	const hdrSize = 18
 	if len(payload) < hdrSize {
 		return nil, fmt.Errorf("GC binary payload too short: %d bytes", len(payload))
 	}
