@@ -13,11 +13,13 @@ type API struct {
 	httpClient  *http.Client
 	baseURL     string
 	accessToken string
+	apiKey      string
 }
 
 type config struct {
 	httpClient *http.Client
 	baseURL    string
+	apiKey     string
 }
 
 type Option func(options *config) error
@@ -35,6 +37,13 @@ func WithHTTPClient(httpClient *http.Client) Option {
 func WithBaseURL(baseURL string) Option {
 	return func(options *config) error {
 		options.baseURL = baseURL
+		return nil
+	}
+}
+
+func WithAPIKey(key string) Option {
+	return func(options *config) error {
+		options.apiKey = key
 		return nil
 	}
 }
@@ -61,6 +70,8 @@ func New(opts ...Option) (*API, error) {
 	if cfg.baseURL != "" {
 		a.baseURL = cfg.baseURL
 	}
+
+	a.apiKey = cfg.apiKey
 
 	return a, nil
 }
@@ -101,6 +112,28 @@ func extractAccessToken(jar http.CookieJar) (string, error) {
 // SetAccessToken sets the access token used to authenticate API requests.
 func (a *API) SetAccessToken(token string) {
 	a.accessToken = token
+}
+
+// SetAPIKey sets the Steam Web API key used to authenticate API requests.
+func (a *API) SetAPIKey(key string) {
+	a.apiKey = key
+}
+
+// getAuthParams returns URL query parameters for authentication.
+// It prefers the API key over the access token.
+func (a *API) getAuthParams() (url.Values, error) {
+	if a.apiKey != "" {
+		v := url.Values{}
+		v.Set("key", a.apiKey)
+		return v, nil
+	}
+	token, err := a.getAccessToken()
+	if err != nil {
+		return nil, err
+	}
+	v := url.Values{}
+	v.Set("access_token", token)
+	return v, nil
 }
 
 // DoRequest executes an arbitrary HTTP request using the API's httpClient
