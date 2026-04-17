@@ -18,9 +18,10 @@ const (
 	MsgClientWelcome  = 4004
 	MsgClientHello    = 4006
 	MsgClientGoodbye  = 4008
-	MsgUseItemRequest = 1025
-	MsgCraft          = 1002
-	MsgCraftResponse  = 1003
+	MsgUseItemRequest    = 1025
+	MsgCraft             = 1002
+	MsgCraftResponse     = 1003
+	MsgRemoveMakersMark  = 1053
 )
 
 // WelcomeEvent is fired when the TF2 GC accepts our session.
@@ -222,6 +223,15 @@ func (c *Client) UseItem(ctx context.Context, itemID uint64) error {
 	body = protowire.AppendTag(body, 1, protowire.VarintType)
 	body = protowire.AppendVarint(body, itemID)
 	return c.SendMessage(ctx, MsgUseItemRequest, body)
+}
+
+// RemoveCrafterName sends a CMsgGCRemoveCustomizationAttributeSimple to remove
+// the "Crafted by" attribute (attribute 228) from an item.
+func (c *Client) RemoveCrafterName(ctx context.Context, itemID uint64) error {
+	var body []byte
+	body = protowire.AppendTag(body, 1, protowire.VarintType)
+	body = protowire.AppendVarint(body, itemID)
+	return c.SendMessage(ctx, MsgRemoveMakersMark, body)
 }
 
 // sendRawMessage sends a non-protobuf (raw binary) message to the TF2 GC.
