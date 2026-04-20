@@ -158,6 +158,24 @@ func (c *Community) SellMarketItem(ctx context.Context, appID int, contextID uin
 // (the row class is `market_recent_listing_row listing_<id>`).
 var listingIDRE = regexp.MustCompile(`market_recent_listing_row listing_(\d+)`)
 
+// pendingListingRE matches only rows in Steam's "Listings awaiting
+// confirmation" section. Active-listing rows render RemoveMarketListing(...)
+// in their cancel-button href; pending rows render
+// CancelMarketListingConfirmation(...) instead, so this regex won't
+// pick up active rows. Capture groups: [1]=listing_id, [2]=asset_id.
+var pendingListingRE = regexp.MustCompile(
+	`CancelMarketListingConfirmation\('mylisting',\s*'(\d+)',\s*\d+,\s*'\d+',\s*'(\d+)'\)`,
+)
+
+// PendingListing represents one row in Steam's "Listings awaiting
+// confirmation" section — a listing that was created via SellMarketItem
+// but whose mobile confirmation was never accepted (and may already have
+// expired off /mobileconf/getlist, leaving the listing orphaned).
+type PendingListing struct {
+	ListingID string
+	AssetID   string
+}
+
 // GetMyMarketListingIDs scrapes listing IDs from the authenticated
 // user's market home page. Steam does not expose a JSON endpoint for
 // this, so we parse the HTML — fragile but tracks Fhub's long-running
@@ -196,6 +214,50 @@ func (c *Community) GetMyMarketListingIDs(ctx context.Context) ([]string, error)
 		}
 	}
 	return ids, nil
+}
+
+// GetMyPendingMarketListings scrapes pending-confirmation rows from the
+// authenticated /market/ page. These are listings created via
+// SellMarketItem that Steam still considers pending (mobile confirmation
+// not accepted, or the confirmation expired before being accepted).
+// The /mylistings/render/ JSON endpoint does NOT surface these, so an
+// HTML scrape is the only path. Returns deduplicated entries in
+// document order; empty slice when the section is empty.
+func (c *Community) GetMyPendingMarketListings(ctx context.Context) ([]PendingListing, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"https://steamcommunity.com/market/", nil)
+	if err != nil {
+		return nil, fmt.Errorf("new request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("do: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	matches := pendingListingRE.FindAllStringSubmatch(string(body), -1)
+	seen := make(map[string]bool, len(matches))
+	out := make([]PendingListing, 0, len(matches))
+	for _, m := range matches {
+		if len(m) < 3 {
+			continue
+		}
+		if seen[m[1]] {
+			continue
+		}
+		seen[m[1]] = true
+		out = append(out, PendingListing{ListingID: m[1], AssetID: m[2]})
+	}
+	return out, nil
 }
 
 // MarketListing is one of the caller's active market listings from
