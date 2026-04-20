@@ -128,6 +128,83 @@ func TestGetMyMarketListingIDs(t *testing.T) {
 	}
 }
 
+func TestGetMyPendingMarketListings(t *testing.T) {
+	// Fixture shape mirrors Steam's /market/ page: one pending row
+	// (cancel-button href calls CancelMarketListingConfirmation) plus
+	// two active rows (RemoveMarketListing). The pending scraper must
+	// pick only the pending row despite identical row classes.
+	const body = `<html>
+<div id="tabContentsMyListings">
+  <div class="market_listing_row market_recent_listing_row listing_1000000000001" id="mylisting_1000000000001">
+    <div class="market_listing_cancel_button">
+      <a href="javascript:CancelMarketListingConfirmation('mylisting', '1000000000001', 440, '2', '2000000001')">Cancel</a>
+    </div>
+  </div>
+</div>
+<div id="tabContentsMyActiveMarketListingsTable">
+  <div class="market_listing_row market_recent_listing_row listing_1000000000002" id="mylisting_1000000000002">
+    <div class="market_listing_cancel_button">
+      <a href="javascript:RemoveMarketListing('mylisting', '1000000000002', 440, '2', '2000000002')">Remove</a>
+    </div>
+  </div>
+  <div class="market_listing_row market_recent_listing_row listing_1000000000003" id="mylisting_1000000000003">
+    <div class="market_listing_cancel_button">
+      <a href="javascript:RemoveMarketListing('mylisting', '1000000000003', 440, '2', '2000000003')">Remove</a>
+    </div>
+  </div>
+</div>
+</html>`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	c := newTestCommunity(t, srv.URL)
+	c.httpClient.Transport = rewriteHostTransport(srv)
+
+	got, err := c.GetMyPendingMarketListings(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d pending listings, want 1: %+v", len(got), got)
+	}
+	want := PendingListing{ListingID: "1000000000001", AssetID: "2000000001"}
+	if got[0] != want {
+		t.Errorf("got %+v, want %+v", got[0], want)
+	}
+}
+
+func TestGetMyPendingMarketListingsDeduplicates(t *testing.T) {
+	// Same pending listing rendered twice (Steam's HTML can duplicate
+	// rows on slow re-renders). Scraper must dedupe by listing_id.
+	const body = `<html>
+<a href="javascript:CancelMarketListingConfirmation('mylisting', '111', 440, '2', '222')">Cancel</a>
+<a href="javascript:CancelMarketListingConfirmation('mylisting', '111', 440, '2', '222')">Cancel dup</a>
+<a href="javascript:CancelMarketListingConfirmation('mylisting', '333', 440, '2', '444')">Cancel</a>
+</html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	c := newTestCommunity(t, srv.URL)
+	c.httpClient.Transport = rewriteHostTransport(srv)
+
+	got, err := c.GetMyPendingMarketListings(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d, want 2 after dedup: %+v", len(got), got)
+	}
+	if got[0].ListingID != "111" || got[1].ListingID != "333" {
+		t.Errorf("unexpected order/ids: %+v", got)
+	}
+}
+
 func TestCancelMarketListing(t *testing.T) {
 	var gotPath, gotSession string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
