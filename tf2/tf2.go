@@ -21,6 +21,7 @@ const (
 	MsgUseItemRequest    = 1025
 	MsgCraft             = 1002
 	MsgCraftResponse     = 1003
+	MsgDelete            = 1004
 	MsgRemoveMakersMark  = 1053
 )
 
@@ -232,6 +233,17 @@ func (c *Client) RemoveCrafterName(ctx context.Context, itemID uint64) error {
 	body = protowire.AppendTag(body, 1, protowire.VarintType)
 	body = protowire.AppendVarint(body, itemID)
 	return c.SendMessage(ctx, MsgRemoveMakersMark, body)
+}
+
+// DeleteItem permanently removes an item from the backpack via
+// EGCItemMsg_k_EMsgGCDelete. Wire format is raw binary (8-byte LE
+// uint64), not protobuf — sending with the proto bit set causes the
+// GC to silently drop it. The removal surfaces through OnItemRemoved
+// once the SOCache delete echoes back.
+func (c *Client) DeleteItem(ctx context.Context, itemID uint64) error {
+	body := make([]byte, 8)
+	binary.LittleEndian.PutUint64(body, itemID)
+	return c.sendRawMessage(ctx, MsgDelete, body)
 }
 
 // sendRawMessage sends a non-protobuf (raw binary) message to the TF2 GC.
