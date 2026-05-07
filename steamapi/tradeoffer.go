@@ -87,6 +87,9 @@ func (a *API) GetTradeOffers(ctx context.Context, opts GetTradeOffersOptions) (*
 	if opts.TimeHistoricalCutoff > 0 {
 		params.Set("time_historical_cutoff", strconv.FormatInt(opts.TimeHistoricalCutoff, 10))
 	}
+	if opts.Cursor > 0 {
+		params.Set("cursor", strconv.FormatUint(uint64(opts.Cursor), 10))
+	}
 
 	reqURL := econServiceURL + "/GetTradeOffers/v1/?" + params.Encode()
 
@@ -126,14 +129,16 @@ func (a *API) GetTradeOffers(ctx context.Context, opts GetTradeOffersOptions) (*
 	return out, nil
 }
 
-// GetTradeOfferWithDescriptions retrieves a single trade offer with item descriptions.
+// GetTradeOfferWithDescriptions retrieves a single trade offer with
+// item descriptions. Note: when authed via access_token (cookie),
+// Steam often returns no descriptions on this endpoint regardless of
+// get_descriptions/language. A real Steam Web API key (set via
+// SetAPIKey) reliably gets descriptions back.
 func (a *API) GetTradeOfferWithDescriptions(ctx context.Context, offerID string) (*GetTradeOfferResult, error) {
-	token, err := a.getAccessToken()
+	params, err := a.getAuthParams()
 	if err != nil {
 		return nil, err
 	}
-	params := url.Values{}
-	params.Set("access_token", token)
 	params.Set("tradeofferid", offerID)
 	params.Set("language", "en")
 	params.Set("get_descriptions", "1")
@@ -161,7 +166,6 @@ func (a *API) GetTradeOfferWithDescriptions(ctx context.Context, offerID string)
 			Descriptions []AssetDescription `json:"descriptions"`
 		} `json:"response"`
 	}
-
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}

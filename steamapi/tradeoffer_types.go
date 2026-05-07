@@ -111,7 +111,14 @@ type Action struct {
 	Name string `json:"name"`
 }
 
-// GetTradeOffersOptions contains options for GetTradeOffers
+// GetTradeOffersOptions contains options for GetTradeOffers.
+//
+// Cursor paginates the response when more offers exist than fit in
+// one page (especially under HistoricalOnly=true, where Steam caps
+// the response). Pass 0 (or omit) for the first page; subsequent
+// calls pass the value of TradeOffersResponse.NextCursor returned by
+// the previous call. Pagination ends when NextCursor is 0 in the
+// response.
 type GetTradeOffersOptions struct {
 	GetSentOffers        bool
 	GetReceivedOffers    bool
@@ -120,12 +127,16 @@ type GetTradeOffersOptions struct {
 	HistoricalOnly       bool
 	Language             string
 	TimeHistoricalCutoff int64
+	Cursor               uint32
 }
 
-// TradeOffersResponse contains the response from GetTradeOffers
+// TradeOffersResponse contains the response from GetTradeOffers.
+// NextCursor is the value to pass back as GetTradeOffersOptions.Cursor
+// to fetch the next page; 0 means there are no more pages.
 type TradeOffersResponse struct {
 	SentOffers     []TradeOffer                `json:"trade_offers_sent"`
 	ReceivedOffers []TradeOffer                `json:"trade_offers_received"`
+	NextCursor     uint32                      `json:"next_cursor"`
 	Descriptions   map[string]AssetDescription `json:"-"`
 }
 
