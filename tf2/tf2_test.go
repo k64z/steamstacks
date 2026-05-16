@@ -363,6 +363,69 @@ func TestRemoveCrafterName(t *testing.T) {
 	}
 }
 
+func TestRemoveGifter(t *testing.T) {
+	mc := &mockConn{writeCh: make(chan []byte, 10)}
+	cm := steamclient.New()
+	cm.SetConn(mc)
+
+	tc := New(cm)
+
+	const itemID uint64 = 67891
+	if err := tc.RemoveGifter(context.Background(), itemID); err != nil {
+		t.Fatalf("RemoveGifter: %v", err)
+	}
+
+	raw := <-mc.writeCh
+
+	if len(raw) < 8 {
+		t.Fatalf("packet too short: %d bytes", len(raw))
+	}
+	emsg := binary.LittleEndian.Uint32(raw[:4])
+	if emsg != uint32(steamclient.EMsgClientToGC)|steamclient.ProtoMask {
+		t.Fatalf("EMsg = %#x, want EMsgClientToGC|ProtoMask", emsg)
+	}
+	hdrLen := binary.LittleEndian.Uint32(raw[4:8])
+	cmBody := raw[8+hdrLen:]
+
+	var gcClient protocol.CMsgGCClient
+	if err := proto.Unmarshal(cmBody, &gcClient); err != nil {
+		t.Fatalf("unmarshal CMsgGCClient: %v", err)
+	}
+	if gcClient.GetAppid() != AppID {
+		t.Errorf("AppID = %d, want %d", gcClient.GetAppid(), AppID)
+	}
+	wantMsgType := uint32(MsgRemoveGiftedBy) | steamclient.ProtoMask
+	if gcClient.GetMsgtype() != wantMsgType {
+		t.Errorf("MsgType = %#x, want %#x", gcClient.GetMsgtype(), wantMsgType)
+	}
+
+	payload := gcClient.GetPayload()
+	if len(payload) < 8 {
+		t.Fatalf("GC payload too short: %d bytes", len(payload))
+	}
+	gcMsgType := binary.LittleEndian.Uint32(payload[:4])
+	if gcMsgType != uint32(MsgRemoveGiftedBy)|steamclient.ProtoMask {
+		t.Errorf("GC inner MsgType = %#x, want %#x", gcMsgType, uint32(MsgRemoveGiftedBy)|steamclient.ProtoMask)
+	}
+	gcHdrLen := binary.LittleEndian.Uint32(payload[4:8])
+	gcBody := payload[8+gcHdrLen:]
+
+	fieldNum, wireType, n := protowire.ConsumeTag(gcBody)
+	if n < 0 {
+		t.Fatalf("protowire.ConsumeTag failed")
+	}
+	if fieldNum != 1 || wireType != protowire.VarintType {
+		t.Fatalf("tag = field %d wire %d, want field 1 varint", fieldNum, wireType)
+	}
+	val, vn := protowire.ConsumeVarint(gcBody[n:])
+	if vn < 0 {
+		t.Fatalf("protowire.ConsumeVarint failed")
+	}
+	if val != itemID {
+		t.Errorf("item_id = %d, want %d", val, itemID)
+	}
+}
+
 func TestCraft(t *testing.T) {
 	mc := &mockConn{writeCh: make(chan []byte, 10)}
 	cm := steamclient.New()
