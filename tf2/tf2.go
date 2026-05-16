@@ -23,6 +23,7 @@ const (
 	MsgCraftResponse     = 1003
 	MsgDelete            = 1004
 	MsgRemoveMakersMark  = 1053
+	MsgRemoveGiftedBy    = 2570
 )
 
 // WelcomeEvent is fired when the TF2 GC accepts our session.
@@ -233,6 +234,15 @@ func (c *Client) RemoveCrafterName(ctx context.Context, itemID uint64) error {
 	body = protowire.AppendTag(body, 1, protowire.VarintType)
 	body = protowire.AppendVarint(body, itemID)
 	return c.SendMessage(ctx, MsgRemoveMakersMark, body)
+}
+
+// RemoveGifter sends a CMsgGCRemoveCustomizationAttributeSimple to remove
+// the "Gifted by" attribute (attribute 186) from an item.
+func (c *Client) RemoveGifter(ctx context.Context, itemID uint64) error {
+	var body []byte
+	body = protowire.AppendTag(body, 1, protowire.VarintType)
+	body = protowire.AppendVarint(body, itemID)
+	return c.SendMessage(ctx, MsgRemoveGiftedBy, body)
 }
 
 // DeleteItem permanently removes an item from the backpack via
