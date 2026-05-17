@@ -11,52 +11,129 @@ import (
 	"strings"
 )
 
-// phoneResult is a common response structure for phone-related API calls.
-type phoneResult struct {
-	Success bool   `json:"success"`
-	Error   string `json:"error"`
+const phoneAjaxURL = "https://store.steampowered.com/phone/add_ajaxop"
+
+// PhoneAjaxResponse is the response from the phone add_ajaxop endpoint.
+// Note: Steam returns inconsistent types (e.g. state is string on success, false on error).
+type PhoneAjaxResponse struct {
+	Success              bool   `json:"success"`
+	State                string `json:"-"` // parsed manually; Steam sends false (bool) on error
+	ErrorText            string `json:"errorText"`
+	RequiresConfirmation bool   `json:"requiresConfirmation"`
+	ConfirmationText     string `json:"confirmationText"`
+	PhoneNumber          string `json:"phoneNumber"`
+	DefaultText          string `json:"defaultText"`
+	InputSize            string `json:"inputSize"`
+	MaxLength            string `json:"maxLength"`
+	PhoneTOSViolation    bool   `json:"phone_tos_violation"`
 }
 
-// doPhoneRequest performs a POST request to a phone API endpoint and decodes the response.
-func (s *Store) doPhoneRequest(ctx context.Context, endpoint string, formData url.Values) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(formData.Encode()))
+type phoneAjaxRaw struct {
+	PhoneAjaxResponse
+	RawState json.RawMessage `json:"state"`
+}
+
+// phoneAjaxOp sends a POST to add_ajaxop with the given op and input.
+func (s *Store) phoneAjaxOp(ctx context.Context, op, input string, confirmed bool) (*PhoneAjaxResponse, error) {
+	confirmedStr := "0"
+	if confirmed {
+		confirmedStr = "1"
+	}
+
+	formData := url.Values{
+		"op":          {op},
+		"input":       {input},
+		"sessionID":   {s.sessionID},
+		"confirmed":   {confirmedStr},
+		"checkfortos": {"1"},
+		"bisediting":  {"0"},
+		"token":       {"0"},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, phoneAjaxURL, strings.NewReader(formData.Encode()))
 	if err != nil {
-		return fmt.Errorf("new request: %w", err)
+		return nil, fmt.Errorf("new request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("do: %w", err)
+		return nil, fmt.Errorf("do: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	var result phoneResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("decode JSON: %w", err)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
 	}
 
-	if !result.Success {
-		if result.Error != "" {
-			return fmt.Errorf("%s", result.Error)
+	var raw phoneAjaxRaw
+	if err := json.Unmarshal(body, &raw); err != nil {
+		preview := string(body)
+		if len(preview) > 500 {
+			preview = preview[:500]
 		}
-		return fmt.Errorf("operation failed")
+		return nil, fmt.Errorf("decode JSON: %w (response: %s)", err, preview)
 	}
 
-	return nil
+	result := &raw.PhoneAjaxResponse
+	// State can be a string or false (bool) on error
+	if len(raw.RawState) > 0 && raw.RawState[0] == '"' {
+		json.Unmarshal(raw.RawState, &result.State)
+	}
+
+	if result.ErrorText != "" {
+		return result, fmt.Errorf("%s", result.ErrorText)
+	}
+
+	if result.PhoneTOSViolation {
+		return result, fmt.Errorf("phone TOS violation")
+	}
+
+	return result, nil
 }
 
-// PhoneInfo represents information about the user's phone status
+// AddPhoneNumber submits a phone number (op=get_phone_number).
+func (s *Store) AddPhoneNumber(ctx context.Context, phoneNumber string) (*PhoneAjaxResponse, error) {
+	return s.phoneAjaxOp(ctx, "get_phone_number", phoneNumber, false)
+}
+
+// AddPhoneNumberConfirmed resubmits with confirmed=true (for reused numbers).
+func (s *Store) AddPhoneNumberConfirmed(ctx context.Context, phoneNumber string) (*PhoneAjaxResponse, error) {
+	return s.phoneAjaxOp(ctx, "get_phone_number", phoneNumber, true)
+}
+
+// ConfirmEmailVerification signals that the email link was clicked (op=email_verification).
+func (s *Store) ConfirmEmailVerification(ctx context.Context) (*PhoneAjaxResponse, error) {
+	return s.phoneAjaxOp(ctx, "email_verification", "", false)
+}
+
+// RetryEmailVerification retries email verification (op=retry_email_verification).
+func (s *Store) RetryEmailVerification(ctx context.Context) (*PhoneAjaxResponse, error) {
+	return s.phoneAjaxOp(ctx, "retry_email_verification", "", false)
+}
+
+// SubmitSMSCode submits the SMS verification code (op=get_sms_code).
+func (s *Store) SubmitSMSCode(ctx context.Context, code string) (*PhoneAjaxResponse, error) {
+	return s.phoneAjaxOp(ctx, "get_sms_code", code, false)
+}
+
+// ResendSMS resends the SMS code (op=resend_sms).
+func (s *Store) ResendSMS(ctx context.Context) (*PhoneAjaxResponse, error) {
+	return s.phoneAjaxOp(ctx, "resend_sms", "", false)
+}
+
+// PhoneInfo represents information about the user's phone status.
 type PhoneInfo struct {
 	HasPhone        bool
-	PhoneEndingWith string // e.g., "79" for "Ends in 79"
+	PhoneEndingWith string
 }
 
-// HasPhone checks if the account has a phone number attached by parsing the account page
+// HasPhone checks if the account has a phone number attached by parsing the account page.
 func (s *Store) HasPhone(ctx context.Context) (*PhoneInfo, error) {
 	req, err := http.NewRequestWithContext(
 		ctx,
@@ -89,7 +166,6 @@ func (s *Store) HasPhone(ctx context.Context) (*PhoneInfo, error) {
 func parsePhoneInfo(html string) (*PhoneInfo, error) {
 	info := &PhoneInfo{}
 
-	// Look for "Ends in XX" pattern in phone section
 	reEndsIn := regexp.MustCompile(`Phone:\s*<img[^>]*>\s*<span[^>]*>Ends in (\d+)</span>`)
 	if m := reEndsIn.FindStringSubmatch(html); len(m) == 2 {
 		info.HasPhone = true
@@ -97,10 +173,8 @@ func parsePhoneInfo(html string) (*PhoneInfo, error) {
 		return info, nil
 	}
 
-	// Alternative: check if "Manage your phone number" link exists with phone data
 	if strings.Contains(html, "phone_header_description") && strings.Contains(html, "Ends in") {
 		info.HasPhone = true
-		// Try simpler pattern
 		reSimple := regexp.MustCompile(`Ends in (\d+)`)
 		if m := reSimple.FindStringSubmatch(html); len(m) == 2 {
 			info.PhoneEndingWith = m[1]
@@ -108,62 +182,4 @@ func parsePhoneInfo(html string) (*PhoneInfo, error) {
 	}
 
 	return info, nil
-}
-
-// AddPhoneNumberRequest contains the data needed to add a phone number
-type AddPhoneNumberRequest struct {
-	PhoneNumber  string
-	PhoneCountry string
-}
-
-// AddPhoneNumber adds a phone number to the account.
-func (s *Store) AddPhoneNumber(ctx context.Context, req *AddPhoneNumberRequest) error {
-	formData := url.Values{
-		"sessionid":    {s.sessionID},
-		"phoneNumber":  {req.PhoneNumber},
-		"phoneCountry": {req.PhoneCountry},
-	}
-	return s.doPhoneRequest(ctx, "https://store.steampowered.com/phone/add_phone_number", formData)
-}
-
-// SendPhoneNumberVerificationMessage sends an SMS verification code to the phone.
-func (s *Store) SendPhoneNumberVerificationMessage(ctx context.Context) error {
-	formData := url.Values{
-		"sessionid": {s.sessionID},
-	}
-	return s.doPhoneRequest(ctx, "https://store.steampowered.com/phone/send_verification_message", formData)
-}
-
-// VerifyPhoneNumber verifies the phone number using the SMS code.
-func (s *Store) VerifyPhoneNumber(ctx context.Context, code string) error {
-	formData := url.Values{
-		"sessionid": {s.sessionID},
-		"code":      {code},
-	}
-	return s.doPhoneRequest(ctx, "https://store.steampowered.com/phone/verify_phone_number", formData)
-}
-
-// ResendVerificationSMS resends the verification SMS code.
-func (s *Store) ResendVerificationSMS(ctx context.Context) error {
-	formData := url.Values{
-		"sessionid": {s.sessionID},
-	}
-	return s.doPhoneRequest(ctx, "https://store.steampowered.com/phone/resend_verification_sms", formData)
-}
-
-// RemovePhoneNumber initiates the removal of a phone number from the account.
-func (s *Store) RemovePhoneNumber(ctx context.Context) error {
-	formData := url.Values{
-		"sessionid": {s.sessionID},
-	}
-	return s.doPhoneRequest(ctx, "https://store.steampowered.com/phone/remove_phone_number", formData)
-}
-
-// ConfirmRemovePhoneNumber confirms the removal of a phone number with SMS code.
-func (s *Store) ConfirmRemovePhoneNumber(ctx context.Context, code string) error {
-	formData := url.Values{
-		"sessionid": {s.sessionID},
-		"code":      {code},
-	}
-	return s.doPhoneRequest(ctx, "https://store.steampowered.com/phone/confirm_remove_phone_number", formData)
 }
