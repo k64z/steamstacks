@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/k64z/steamstacks/steamapi"
 	"github.com/k64z/steamstacks/steamid"
 )
 
@@ -48,7 +49,7 @@ func (c *Community) GetFriendsList(ctx context.Context) (map[steamid.SteamID]EFr
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, steamapi.HTTPStatusError(resp.StatusCode, body)
 	}
 
 	var result struct {
@@ -179,7 +180,7 @@ func (c *Community) postAction(ctx context.Context, endpoint string, extra url.V
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, steamapi.HTTPStatusError(resp.StatusCode, body)
 	}
 
 	return resp, nil

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/k64z/steamstacks/steamapi"
 	"github.com/k64z/steamstacks/steamid"
 )
 
@@ -183,7 +184,7 @@ func (c *Community) GetInventory(ctx context.Context, steamID steamid.SteamID, a
 		case http.StatusTooManyRequests:
 			return nil, errRateLimited
 		default:
-			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+			return nil, steamapi.HTTPStatusError(resp.StatusCode, body)
 		}
 
 		items, hasMore, lastAssetID, err := parseInventoryResponse(body)

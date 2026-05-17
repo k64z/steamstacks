@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/k64z/steamstacks/steamapi"
 )
 
 // MarketPriceOverview is the Steam Community Market /priceoverview/
@@ -72,7 +74,7 @@ func (c *Community) GetMarketPriceOverview(ctx context.Context, appID, currency 
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, steamapi.HTTPStatusError(resp.StatusCode, body)
 	}
 
 	out := &MarketPriceOverview{}
@@ -126,7 +128,7 @@ func (c *Community) SellMarketItem(ctx context.Context, appID int, contextID uin
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, steamapi.HTTPStatusError(resp.StatusCode, body)
 	}
 
 	out := &MarketSellResult{}
@@ -603,7 +605,7 @@ func (c *Community) CancelMarketListing(ctx context.Context, listingID string) e
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return steamapi.HTTPStatusError(resp.StatusCode, body)
 	}
 	return nil
 }

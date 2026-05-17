@@ -192,7 +192,7 @@ func (a *API) GetTradeOfferWithDescriptions(ctx context.Context, offerID string)
 func checkEconResponse(resp *http.Response) error {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return HTTPStatusError(resp.StatusCode, body)
 	}
 
 	eresult := resp.Header.Get("X-Eresult")

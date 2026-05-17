@@ -163,7 +163,7 @@ func (c *Community) SendTradeOffer(ctx context.Context, opts SendTradeOfferOptio
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, steamapi.HTTPStatusError(resp.StatusCode, body)
 	}
 
 	var result struct {
@@ -224,7 +224,7 @@ func (c *Community) AcceptTradeOffer(ctx context.Context, offerID string, partne
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, steamapi.HTTPStatusError(resp.StatusCode, body)
 	}
 
 	var result struct {
@@ -288,7 +288,7 @@ func (c *Community) cancelOrDeclineOffer(ctx context.Context, offerID, action st
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return steamapi.HTTPStatusError(resp.StatusCode, body)
 	}
 
 	var result struct {
