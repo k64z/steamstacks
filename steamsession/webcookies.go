@@ -62,7 +62,7 @@ func (s *Session) GetWebCookies(ctx context.Context) error {
 			return errors.New("access token has expired (re-login needed)")
 		}
 
-		s.setSteamCommunityWebCookies()
+		s.setWebCookies()
 
 		if s.platformType == PlatformTypeMobileApp {
 			s.installAuthTransport(exp)
@@ -190,11 +190,10 @@ func (s *Session) submitTransferInfo(ctx context.Context, transferInfo TransferI
 	return nil
 }
 
-// setSteamCommunityWebCookies populates the cookie jar with sessionid and
-// steamLoginSecure for steamcommunity.com using the current AccessToken.
-func (s *Session) setSteamCommunityWebCookies() {
-	u, _ := url.Parse("https://steamcommunity.com")
-	s.httpClient.Jar.SetCookies(u, []*http.Cookie{
+// setWebCookies populates the cookie jar with sessionid and steamLoginSecure
+// for steamcommunity.com and store.steampowered.com using the current AccessToken.
+func (s *Session) setWebCookies() {
+	cookies := []*http.Cookie{
 		{
 			Name:     "sessionid",
 			Value:    s.sessionID,
@@ -209,7 +208,12 @@ func (s *Session) setSteamCommunityWebCookies() {
 			Secure:   true,
 			HttpOnly: true,
 		},
-	})
+	}
+
+	for _, domain := range []string{"https://steamcommunity.com", "https://store.steampowered.com"} {
+		u, _ := url.Parse(domain)
+		s.httpClient.Jar.SetCookies(u, cookies)
+	}
 }
 
 // installAuthTransport wraps the HTTP client's transport with an authTransport

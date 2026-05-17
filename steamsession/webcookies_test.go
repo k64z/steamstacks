@@ -307,7 +307,7 @@ func TestAuthTransportProactiveRefresh(t *testing.T) {
 	}
 
 	// Pre-populate cookies so the jar has something for patchRequestCookies.
-	s.setSteamCommunityWebCookies()
+	s.setWebCookies()
 
 	// Install authTransport with an already-expired tokenExpiry so it
 	// triggers proactive refresh on the first request.
@@ -411,7 +411,7 @@ func TestAuthTransportReactiveRefresh(t *testing.T) {
 		loginURL:     ts.URL,
 	}
 
-	s.setSteamCommunityWebCookies()
+	s.setWebCookies()
 
 	// Install authTransport with a future tokenExpiry — no proactive refresh.
 	at := &authTransport{
@@ -502,7 +502,7 @@ func TestAuthTransportProactiveRefreshMobileApp(t *testing.T) {
 	}
 
 	// Pre-populate cookies so the jar has something for patchRequestCookies.
-	s.setSteamCommunityWebCookies()
+	s.setWebCookies()
 
 	// Install authTransport with an already-expired tokenExpiry so it
 	// triggers proactive refresh on the first request.
