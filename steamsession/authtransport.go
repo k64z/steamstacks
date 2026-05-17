@@ -28,7 +28,7 @@ type refreshBypassKey struct{}
 //   - WebBrowser: re-establishes web cookies via FinalizeLogin (transfer info
 //     flow). Requires a bypass context to prevent recursive interception.
 //   - MobileApp: calls GenerateAccessTokenForApp (Steam Web API) to get a fresh
-//     access token, then updates cookies via setSteamCommunityWebCookies.
+//     access token, then updates cookies via setWebCookies.
 //     No bypass context needed since the API call goes to api.steampowered.com.
 //
 // Only triggers for steamcommunity.com to avoid interfering with
@@ -82,7 +82,7 @@ func (t *authTransport) needsRefresh() bool {
 // refresh obtains a fresh access token and updates the cookie jar.
 // The strategy depends on the session's platform type:
 //   - WebBrowser: FinalizeLogin → extract token from jar
-//   - MobileApp: GenerateAccessTokenForApp → setSteamCommunityWebCookies
+//   - MobileApp: GenerateAccessTokenForApp → setWebCookies
 func (t *authTransport) refresh(ctx context.Context) error {
 	if t.session.platformType == PlatformTypeMobileApp {
 		return t.refreshMobileApp(ctx)
@@ -117,7 +117,7 @@ func (t *authTransport) refreshWebBrowser(ctx context.Context) error {
 }
 
 // refreshMobileApp uses GenerateAccessTokenForApp to get a fresh access token,
-// then updates the cookie jar via setSteamCommunityWebCookies.
+// then updates the cookie jar via setWebCookies.
 // No bypass context is needed since the API call goes to api.steampowered.com,
 // not steamcommunity.com.
 func (t *authTransport) refreshMobileApp(ctx context.Context) error {
@@ -125,7 +125,7 @@ func (t *authTransport) refreshMobileApp(ctx context.Context) error {
 		return err
 	}
 
-	t.session.setSteamCommunityWebCookies()
+	t.session.setWebCookies()
 
 	exp, err := jwtExpiry(t.session.AccessToken)
 	if err != nil {
