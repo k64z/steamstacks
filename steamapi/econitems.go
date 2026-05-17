@@ -48,11 +48,7 @@ func (a *API) GetSchemaItems(ctx context.Context, appID uint32, opts GetSchemaIt
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		snippet := string(body)
-		if len(snippet) > 200 {
-			snippet = snippet[:200]
-		}
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, snippet)
+		return nil, HTTPStatusError(resp.StatusCode, body)
 	}
 
 	return resp.Body, nil

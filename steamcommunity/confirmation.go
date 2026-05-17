@@ -98,7 +98,7 @@ func (c *Community) GetConfirmations(ctx context.Context, identitySecret []byte)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, steamapi.HTTPStatusError(resp.StatusCode, body)
 	}
 
 	var result struct {
@@ -187,7 +187,7 @@ func (c *Community) respondToConfirmation(ctx context.Context, conf Confirmation
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return steamapi.HTTPStatusError(resp.StatusCode, body)
 	}
 
 	var result struct {
