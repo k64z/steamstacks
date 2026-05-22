@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -624,4 +625,49 @@ func TestGetMarketListingsSurfacesSteamFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when render endpoint returns success=false")
 	}
+}
+
+func TestParseMarketItemPage(t *testing.T) {
+	body, err := os.ReadFile("testdata/market_listing_page.html")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	d, err := parseMarketItemPage(body)
+	if err != nil {
+		t.Fatalf("parseMarketItemPage: %v", err)
+	}
+	if d.LowestSellCents <= 0 || d.HighestBuyCents <= 0 {
+		t.Errorf("expected non-zero order book, got lowSell=%d highBuy=%d",
+			d.LowestSellCents, d.HighestBuyCents)
+	}
+	if d.SellOrderCount <= 0 || d.BuyOrderCount <= 0 {
+		t.Errorf("expected non-zero order counts, got sell=%d buy=%d",
+			d.SellOrderCount, d.BuyOrderCount)
+	}
+	if d.MedianPriceCents <= 0 {
+		t.Errorf("expected non-zero median, got %d", d.MedianPriceCents)
+	}
+	if d.Currency == 0 {
+		t.Error("expected a currency code")
+	}
+	if len(d.BuyOrders) == 0 || len(d.SellOrders) == 0 {
+		t.Fatalf("expected order-book depth, got buy=%d sell=%d levels",
+			len(d.BuyOrders), len(d.SellOrders))
+	}
+	// BuyOrders lead highest-price-first, SellOrders lowest-price-first.
+	if d.BuyOrders[0].PriceCents != d.HighestBuyCents {
+		t.Errorf("BuyOrders[0] price %d != HighestBuyCents %d",
+			d.BuyOrders[0].PriceCents, d.HighestBuyCents)
+	}
+	if d.SellOrders[0].PriceCents != d.LowestSellCents {
+		t.Errorf("SellOrders[0] price %d != LowestSellCents %d",
+			d.SellOrders[0].PriceCents, d.LowestSellCents)
+	}
+	if d.PriceIncrement < 1 {
+		t.Errorf("expected a price increment >= 1, got %d", d.PriceIncrement)
+	}
+	t.Logf("parsed: currency=%d lowSell=%d highBuy=%d sellN=%d buyN=%d median=%d vol24h=%d commodity=%v buyLevels=%d sellLevels=%d increment=%d",
+		d.Currency, d.LowestSellCents, d.HighestBuyCents, d.SellOrderCount,
+		d.BuyOrderCount, d.MedianPriceCents, d.Volume24h, d.Commodity,
+		len(d.BuyOrders), len(d.SellOrders), d.PriceIncrement)
 }
