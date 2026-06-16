@@ -6,14 +6,20 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/k64z/steamstacks/steamid"
 )
 
 type Community struct {
 	httpClient *http.Client
-	sessionID  string
-	SteamID    steamid.SteamID
+	// initMu guards lazy initialisation of sessionID + SteamID. Callers
+	// that fan parallel goroutines into the same *Community (e.g.
+	// fh-backend's friends module hitting three /friends/* pages
+	// concurrently) would otherwise race on the first ensureInit.
+	initMu    sync.Mutex
+	sessionID string
+	SteamID   steamid.SteamID
 }
 
 type config struct {
@@ -53,21 +59,24 @@ func New(opts ...Option) (*Community, error) {
 }
 
 // ensureInit lazily extracts session credentials from the cookie jar.
-// It caches on success and retries on failure.
+// It caches on success and retries on failure. Safe for concurrent
+// callers — initMu serialises the first-time extraction.
 func (c *Community) ensureInit() error {
+	c.initMu.Lock()
+	defer c.initMu.Unlock()
 	if c.sessionID != "" {
 		return nil
 	}
-	var err error
-	c.sessionID, err = extractSessionID(c.httpClient.Jar)
+	sessionID, err := extractSessionID(c.httpClient.Jar)
 	if err != nil {
 		return fmt.Errorf("extract sessionID: %w", err)
 	}
-	c.SteamID, err = extractSteamID(c.httpClient.Jar)
+	steamID, err := extractSteamID(c.httpClient.Jar)
 	if err != nil {
-		c.sessionID = "" // reset so next call retries
 		return fmt.Errorf("extract steamID: %w", err)
 	}
+	c.sessionID = sessionID
+	c.SteamID = steamID
 	return nil
 }
 
