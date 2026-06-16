@@ -411,6 +411,43 @@ func TestParseMarketListingsLocaleIndependent(t *testing.T) {
 	}
 }
 
+func TestParseWalletFeeInfo(t *testing.T) {
+	// g_rgWalletInfo as Steam embeds it for a logged-in KZT account: numeric
+	// fee fields are quoted strings, wallet_currency is bare.
+	page := `<html><head><script>
+		var g_rgWalletInfo = {"wallet_currency":37,"wallet_country":"KZ","wallet_fee":"1","wallet_fee_minimum":"500","wallet_fee_percent":"0.05","wallet_publisher_fee_percent_default":"0.10","wallet_currency_increment":"100","wallet_fee_base":"0","wallet_balance":"12345","wallet_max_balance":"5000000"};
+	</script></head><body>market</body></html>`
+
+	info, err := parseWalletFeeInfo([]byte(page))
+	if err != nil {
+		t.Fatalf("parseWalletFeeInfo: %v", err)
+	}
+	if info.Currency != 37 || info.FeeMinimum != 500 || info.FeeBase != 0 ||
+		info.FeePercent != 0.05 || info.PublisherFeePercentDefault != 0.10 ||
+		info.CurrencyIncrement != 100 {
+		t.Errorf("parsed %+v, want currency=37 min=500 base=0 pct=0.05 pub=0.10 incr=100", *info)
+	}
+	if info.Balance != 12345 || info.MaxBalance != 5000000 {
+		t.Errorf("parsed balance=%d max=%d, want 12345/5000000", info.Balance, info.MaxBalance)
+	}
+
+	// Page without the wallet balance/cap fields still parses (they're
+	// best-effort); the required fee minimum is present so it's not an error.
+	noBal := `<html><head><script>
+		var g_rgWalletInfo = {"wallet_currency":1,"wallet_fee_minimum":"1","wallet_fee_base":"0","wallet_fee_percent":"0.05","wallet_publisher_fee_percent_default":"0.10","wallet_currency_increment":"1"};
+	</script></head><body>market</body></html>`
+	if info, err := parseWalletFeeInfo([]byte(noBal)); err != nil {
+		t.Errorf("no-balance page: unexpected err %v", err)
+	} else if info.Balance != 0 || info.MaxBalance != 0 {
+		t.Errorf("no-balance page: balance=%d max=%d, want 0/0", info.Balance, info.MaxBalance)
+	}
+
+	// No g_rgWalletInfo (stripped page) -> ErrWalletFeeInfoUnavailable.
+	if _, err := parseWalletFeeInfo([]byte(`<html><body>install steam</body></html>`)); !errors.Is(err, ErrWalletFeeInfoUnavailable) {
+		t.Errorf("stripped page err = %v, want ErrWalletFeeInfoUnavailable", err)
+	}
+}
+
 func TestParseExtractsAssetRefFromCancelButton(t *testing.T) {
 	// The RemoveMarketListing call lives AFTER the inner
 	// mylisting_<id>_name span. A naive prefix scan would clip

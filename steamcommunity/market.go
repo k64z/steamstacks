@@ -40,11 +40,11 @@ type MarketSellResult struct {
 // Market-side error taxonomy. Callers typically log-and-continue on
 // these rather than aborting the whole cycle.
 var (
-	ErrMarketItemServerDown       = errors.New("market: game's item server may be down")
-	ErrMarketPendingConfirmation  = errors.New("market: listing pending confirmation for this item")
-	ErrMarketItemNotInInventory   = errors.New("market: item no longer in inventory")
-	ErrMarketListingProblem       = errors.New("market: generic listing problem; retry")
-	ErrMarketWalletTooMuchMoney   = errors.New("market: wallet holds too much money")
+	ErrMarketItemServerDown        = errors.New("market: game's item server may be down")
+	ErrMarketPendingConfirmation   = errors.New("market: listing pending confirmation for this item")
+	ErrMarketItemNotInInventory    = errors.New("market: item no longer in inventory")
+	ErrMarketListingProblem        = errors.New("market: generic listing problem; retry")
+	ErrMarketWalletTooMuchMoney    = errors.New("market: wallet holds too much money")
 	ErrMarketPreviousActionPending = errors.New("market: previous action still pending")
 )
 
@@ -579,6 +579,117 @@ func normalizeWhitespace(s string) string {
 	return strings.TrimSpace(strings.Join(strings.Fields(s), " "))
 }
 
+// browserUserAgent is a common-browser UA. Steam serves a stripped page
+// (no embedded user/wallet scripts) to the Go default UA on several market
+// routes, so the fetches that need that embedded data send this instead.
+const browserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+
+// WalletFeeInfo is the Steam Community Market fee configuration for the
+// authenticated account's wallet currency, parsed from the g_rgWalletInfo
+// block Steam embeds in the classic /market/ home page. These are the exact
+// values Steam's own sell-fee calculator (CalculateFeeAmount) uses.
+// FeeMinimum is the per-component floor — Steam's $0.01 base converted into
+// the wallet currency, so it tracks the exchange rate. All *minor-unit
+// fields are integers in Currency.
+type WalletFeeInfo struct {
+	Currency                   int     // Steam currency code
+	FeeMinimum                 int     // per-component fee floor, minor units
+	FeeBase                    int     // flat addition to the Steam fee, minor units
+	FeePercent                 float64 // Steam transaction fee fraction (e.g. 0.05)
+	PublisherFeePercentDefault float64 // default publisher fee fraction (e.g. 0.10)
+	CurrencyIncrement          int     // smallest accepted price step, minor units
+	// Balance is the wallet's current funds and MaxBalance is Steam's
+	// per-currency wallet cap (the "you have too much money" ceiling),
+	// both minor units. Both are best-effort: 0 means the field was absent
+	// from g_rgWalletInfo (a logged-out or stripped page omits them), so
+	// callers must treat 0 as "unknown", not an authoritative empty wallet.
+	Balance    int
+	MaxBalance int
+}
+
+// ErrWalletFeeInfoUnavailable is returned when the /market/ page carries no
+// g_rgWalletInfo block — e.g. a logged-out session, or Steam served the
+// stripped React page (the latter is why this fetch sends a browser UA).
+var ErrWalletFeeInfoUnavailable = errors.New("market: g_rgWalletInfo not present on market page")
+
+var (
+	walletFeeMinimumRE = regexp.MustCompile(`"wallet_fee_minimum":\s*"?([0-9]+)"?`)
+	walletFeeBaseRE    = regexp.MustCompile(`"wallet_fee_base":\s*"?([0-9]+)"?`)
+	walletFeePercentRE = regexp.MustCompile(`"wallet_fee_percent":\s*"?([0-9.]+)"?`)
+	walletPubFeeRE     = regexp.MustCompile(`"wallet_publisher_fee_percent_default":\s*"?([0-9.]+)"?`)
+	walletCurrencyRE   = regexp.MustCompile(`"wallet_currency":\s*"?([0-9]+)"?`)
+	walletIncrementRE  = regexp.MustCompile(`"wallet_currency_increment":\s*"?([0-9]+)"?`)
+	walletBalanceRE    = regexp.MustCompile(`"wallet_balance":\s*"?([0-9]+)"?`)
+	walletMaxBalanceRE = regexp.MustCompile(`"wallet_max_balance":\s*"?([0-9]+)"?`)
+)
+
+// GetWalletFeeInfo fetches the authenticated account's market fee
+// configuration from the g_rgWalletInfo block embedded in the classic
+// /market/ home page. A browser User-Agent is required — Steam serves a
+// stripped page without g_rgWalletInfo to the default Go UA. Returns
+// ErrWalletFeeInfoUnavailable when the block (or its fee minimum) is absent.
+func (c *Community) GetWalletFeeInfo(ctx context.Context) (*WalletFeeInfo, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"https://steamcommunity.com/market/", nil)
+	if err != nil {
+		return nil, fmt.Errorf("new request: %w", err)
+	}
+	req.Header.Set("User-Agent", browserUserAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("do: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, steamapi.HTTPStatusError(resp.StatusCode, body)
+	}
+	return parseWalletFeeInfo(body)
+}
+
+// parseWalletFeeInfo extracts the fee fields from a /market/ page body. Split
+// out so tests can feed a saved page directly. Steam quotes the numeric fee
+// fields ("500", "0.05") and leaves wallet_currency bare; the regexes accept
+// either. The fee minimum is required — its absence means no usable block.
+func parseWalletFeeInfo(body []byte) (*WalletFeeInfo, error) {
+	s := string(body)
+	m := walletFeeMinimumRE.FindStringSubmatch(s)
+	if len(m) != 2 {
+		return nil, ErrWalletFeeInfoUnavailable
+	}
+	out := &WalletFeeInfo{}
+	out.FeeMinimum, _ = strconv.Atoi(m[1])
+	if g := walletFeeBaseRE.FindStringSubmatch(s); len(g) == 2 {
+		out.FeeBase, _ = strconv.Atoi(g[1])
+	}
+	if g := walletCurrencyRE.FindStringSubmatch(s); len(g) == 2 {
+		out.Currency, _ = strconv.Atoi(g[1])
+	}
+	if g := walletIncrementRE.FindStringSubmatch(s); len(g) == 2 {
+		out.CurrencyIncrement, _ = strconv.Atoi(g[1])
+	}
+	if g := walletFeePercentRE.FindStringSubmatch(s); len(g) == 2 {
+		out.FeePercent, _ = strconv.ParseFloat(g[1], 64)
+	}
+	if g := walletPubFeeRE.FindStringSubmatch(s); len(g) == 2 {
+		out.PublisherFeePercentDefault, _ = strconv.ParseFloat(g[1], 64)
+	}
+	if g := walletBalanceRE.FindStringSubmatch(s); len(g) == 2 {
+		out.Balance, _ = strconv.Atoi(g[1])
+	}
+	if g := walletMaxBalanceRE.FindStringSubmatch(s); len(g) == 2 {
+		out.MaxBalance, _ = strconv.Atoi(g[1])
+	}
+	return out, nil
+}
+
 // MarketItemPageData is the order-book + recent-price summary parsed
 // from the React-Query state Steam embeds in a /market/listings/ page
 // under window.SSR.renderContext.
@@ -658,7 +769,7 @@ func (c *Community) GetMarketItemPageData(ctx context.Context, appID int, market
 	}
 	// A common-browser UA avoids the stripped "install Steam" fallback
 	// page Steam serves to the Go default UA on some listing routes.
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	req.Header.Set("User-Agent", browserUserAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 
