@@ -61,9 +61,22 @@ func containsAny(s string, subs []string) bool {
 	return false
 }
 
+// HTTPStatusErr is the typed error HTTPStatusError now returns. Callers
+// can use errors.As to recover the status code without parsing the
+// formatted message — that's the right way to tell 401/403 apart from
+// "the error string happens to contain '403'" (e.g. inside a SteamID).
+type HTTPStatusErr struct {
+	Status  int
+	Snippet string
+}
+
+func (e *HTTPStatusErr) Error() string {
+	return fmt.Sprintf("HTTP %d: %s", e.Status, e.Snippet)
+}
+
 // HTTPStatusError builds the canonical "HTTP <code>: <body>" error used across
 // the Steam clients, with the body run through errorBodySnippet so no call
 // site can leak a multi-KB HTML page into the logs.
 func HTTPStatusError(status int, body []byte) error {
-	return fmt.Errorf("HTTP %d: %s", status, errorBodySnippet(body))
+	return &HTTPStatusErr{Status: status, Snippet: errorBodySnippet(body)}
 }
