@@ -272,6 +272,82 @@ func TestUnblockUser(t *testing.T) {
 	}
 }
 
+func TestIgnoreFriendInvite(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wantPath := "/profiles/76561198000000000/friends/action"
+		if r.URL.Path != wantPath {
+			t.Errorf("path = %q; want %q", r.URL.Path, wantPath)
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		if got := r.PostFormValue("sessionid"); got != "test-session-id" {
+			t.Errorf("sessionid = %q; want %q", got, "test-session-id")
+		}
+		if got := r.PostFormValue("action"); got != "ignore_invite" {
+			t.Errorf("action = %q; want %q", got, "ignore_invite")
+		}
+		if got := r.PostFormValue("ajax"); got != "1" {
+			t.Errorf("ajax = %q; want %q", got, "1")
+		}
+		if got := r.PostFormValue("steamids[]"); got != "76561198333333333" {
+			t.Errorf("steamids[] = %q; want %q", got, "76561198333333333")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := newTestCommunity(t, srv.URL)
+	c.httpClient.Transport = rewriteHostTransport(srv)
+
+	target := steamid.FromSteamID64(76561198333333333)
+	if err := c.IgnoreFriendInvite(context.Background(), target); err != nil {
+		t.Fatalf("IgnoreFriendInvite: %v", err)
+	}
+}
+
+func TestCancelFriendInvite(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		if got := r.PostFormValue("action"); got != "remove" {
+			t.Errorf("action = %q; want %q", got, "remove")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := newTestCommunity(t, srv.URL)
+	c.httpClient.Transport = rewriteHostTransport(srv)
+
+	target := steamid.FromSteamID64(76561198333333333)
+	if err := c.CancelFriendInvite(context.Background(), target); err != nil {
+		t.Fatalf("CancelFriendInvite: %v", err)
+	}
+}
+
+func TestApplyFriendsAction_HTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	c := newTestCommunity(t, srv.URL)
+	c.httpClient.Transport = rewriteHostTransport(srv)
+
+	target := steamid.FromSteamID64(76561198333333333)
+	if err := c.IgnoreFriendInvite(context.Background(), target); err == nil {
+		t.Fatal("expected error for HTTP 403")
+	}
+}
+
 func TestUnblockUser_HTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)

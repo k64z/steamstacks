@@ -131,6 +131,55 @@ func (c *Community) RemoveFriend(ctx context.Context, target steamid.SteamID) er
 	return nil
 }
 
+// IgnoreFriendInvite silently rejects an incoming friend invite from target.
+// Mirrors the "Ignore" button on steamcommunity.com/<id>/friends/pending.
+func (c *Community) IgnoreFriendInvite(ctx context.Context, target steamid.SteamID) error {
+	return c.applyFriendsAction(ctx, "ignore_invite", target)
+}
+
+// CancelFriendInvite revokes an outgoing friend invite previously sent to target.
+// Mirrors the "Cancel" action on Steam's pending invites page.
+func (c *Community) CancelFriendInvite(ctx context.Context, target steamid.SteamID) error {
+	return c.applyFriendsAction(ctx, "remove", target)
+}
+
+// applyFriendsAction posts to the per-profile /friends/action endpoint used by
+// Steam's "Manage Friends" UI (see Steam's public friends.js, ApplyFriendAction).
+// Distinct from postAction() because this endpoint expects lowercase sessionid
+// and the steamids[] form repeat used by the bulk-action UI.
+func (c *Community) applyFriendsAction(ctx context.Context, action string, target steamid.SteamID) error {
+	if err := c.ensureInit(); err != nil {
+		return err
+	}
+
+	endpoint := fmt.Sprintf("https://steamcommunity.com/profiles/%d/friends/action", c.SteamID.ToSteamID64())
+
+	form := url.Values{}
+	form.Set("sessionid", c.sessionID)
+	form.Set("steamid", strconv.FormatUint(c.SteamID.ToSteamID64(), 10))
+	form.Set("ajax", "1")
+	form.Set("action", action)
+	form.Set("steamids[]", strconv.FormatUint(target.ToSteamID64(), 10))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return steamapi.HTTPStatusError(resp.StatusCode, body)
+	}
+	return nil
+}
+
 // BlockUser also removes the target from the friends list.
 func (c *Community) BlockUser(ctx context.Context, target steamid.SteamID) error {
 	extra := url.Values{}
