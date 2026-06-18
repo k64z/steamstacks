@@ -370,7 +370,7 @@ func (c *Client) handleCraftResponse(b []byte) {
 	}
 
 	ev := &CraftEvent{Recipe: recipe, ItemIDs: ids}
-	c.logger.Info("tf2: craft response", "recipe", ev.Recipe, "items", len(ev.ItemIDs))
+	c.logger.Debug("tf2: craft response", "recipe", ev.Recipe, "items", len(ev.ItemIDs))
 	if c.OnCraftCompleted != nil {
 		c.OnCraftCompleted(ev)
 	}
