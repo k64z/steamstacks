@@ -3,7 +3,6 @@ package steamcommunity
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
@@ -110,8 +109,7 @@ func (c *Community) fetchHTML(ctx context.Context, url string) (*html.Node, erro
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, steamapi.HTTPStatusError(resp.StatusCode, body)
+		return nil, steamapi.HTTPStatusErrorFromResponse(resp)
 	}
 	doc, err := html.Parse(resp.Body)
 	if err != nil {

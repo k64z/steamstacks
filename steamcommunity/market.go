@@ -1050,8 +1050,7 @@ func (c *Community) CancelMarketListing(ctx context.Context, listingID string) e
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return steamapi.HTTPStatusError(resp.StatusCode, body)
+		return steamapi.HTTPStatusErrorFromResponse(resp)
 	}
 	return nil
 }

@@ -46,9 +46,9 @@ func (a *API) GetSchemaItems(ctx context.Context, appID uint32, opts GetSchemaIt
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		err := HTTPStatusErrorFromResponse(resp)
 		resp.Body.Close()
-		return nil, HTTPStatusError(resp.StatusCode, body)
+		return nil, err
 	}
 
 	return resp.Body, nil

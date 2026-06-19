@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -191,8 +190,7 @@ func (a *API) GetTradeOfferWithDescriptions(ctx context.Context, offerID string)
 // checkEconResponse checks the response from IEconService endpoints
 func checkEconResponse(resp *http.Response) error {
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return HTTPStatusError(resp.StatusCode, body)
+		return HTTPStatusErrorFromResponse(resp)
 	}
 
 	eresult := resp.Header.Get("X-Eresult")

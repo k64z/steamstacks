@@ -1,6 +1,9 @@
 package steamapi
 
 import (
+	"errors"
+	"io"
+	"net/http"
 	"regexp"
 	"strings"
 	"testing"
@@ -70,5 +73,30 @@ func TestHTTPStatusError_HTMLBody(t *testing.T) {
 	want := "HTTP 503: [html response omitted, 58 bytes]"
 	if err.Error() != want {
 		t.Errorf("got %q; want %q", err.Error(), want)
+	}
+}
+
+func TestHTTPStatusErrorFromResponse_ReadsBody(t *testing.T) {
+	resp := &http.Response{StatusCode: 500, Body: io.NopCloser(strings.NewReader("  kaboom  "))}
+	err := HTTPStatusErrorFromResponse(resp)
+	if want := "HTTP 500: kaboom"; err.Error() != want {
+		t.Errorf("got %q; want %q", err.Error(), want)
+	}
+}
+
+// errReader fails on Read so we can exercise the body-read-failure path.
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errors.New("connection reset") }
+
+func TestHTTPStatusErrorFromResponse_ReadError(t *testing.T) {
+	resp := &http.Response{StatusCode: 502, Body: io.NopCloser(errReader{})}
+	err := HTTPStatusErrorFromResponse(resp)
+	if !strings.Contains(err.Error(), "error reading body") {
+		t.Errorf("got %q; want it to surface the read failure", err.Error())
+	}
+	var se *HTTPStatusErr
+	if !errors.As(err, &se) || se.Status != 502 {
+		t.Errorf("got %v; want a *HTTPStatusErr with Status 502", err)
 	}
 }

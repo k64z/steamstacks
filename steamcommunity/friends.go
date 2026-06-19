@@ -174,8 +174,7 @@ func (c *Community) applyFriendsAction(ctx context.Context, action string, targe
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return steamapi.HTTPStatusError(resp.StatusCode, body)
+		return steamapi.HTTPStatusErrorFromResponse(resp)
 	}
 	return nil
 }
@@ -227,9 +226,9 @@ func (c *Community) postAction(ctx context.Context, endpoint string, extra url.V
 	}
 
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
+		err := steamapi.HTTPStatusErrorFromResponse(resp)
 		resp.Body.Close()
-		return nil, steamapi.HTTPStatusError(resp.StatusCode, body)
+		return nil, err
 	}
 
 	return resp, nil

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -101,8 +100,7 @@ func (a *API) getPlayerSummariesBatch(ctx context.Context, ids []steamid.SteamID
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, HTTPStatusError(resp.StatusCode, body)
+		return nil, HTTPStatusErrorFromResponse(resp)
 	}
 
 	var decoded struct {

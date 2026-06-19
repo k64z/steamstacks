@@ -2,6 +2,8 @@ package steamapi
 
 import (
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"unicode/utf8"
 )
@@ -79,4 +81,21 @@ func (e *HTTPStatusErr) Error() string {
 // site can leak a multi-KB HTML page into the logs.
 func HTTPStatusError(status int, body []byte) error {
 	return &HTTPStatusErr{Status: status, Snippet: errorBodySnippet(body)}
+}
+
+// HTTPStatusErrorFromResponse is HTTPStatusError for a non-OK *http.Response:
+// it reads the body itself so call sites stop repeating the
+// ReadAll-then-snippet preamble (several of which dropped the ReadAll error,
+// silently losing the "couldn't even read the error body" diagnostic). A read
+// failure is surfaced in the snippet rather than swallowed.
+//
+// It reads but does NOT close resp.Body — the caller that opened the response
+// keeps close responsibility (a deferred Close, or an explicit Close on the
+// success path that returns the body to its own caller).
+func HTTPStatusErrorFromResponse(resp *http.Response) error {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return &HTTPStatusErr{Status: resp.StatusCode, Snippet: fmt.Sprintf("(error reading body: %v)", err)}
+	}
+	return HTTPStatusError(resp.StatusCode, body)
 }
