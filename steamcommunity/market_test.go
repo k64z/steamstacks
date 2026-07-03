@@ -703,8 +703,28 @@ func TestParseMarketItemPage(t *testing.T) {
 	if d.PriceIncrement < 1 {
 		t.Errorf("expected a price increment >= 1, got %d", d.PriceIncrement)
 	}
+	// The fixture item is a commodity; Steam serializes the flag as a JSON
+	// bool, so a regression to an int-typed decode would leave this false.
+	if !d.Commodity {
+		t.Error("expected the fixture item to parse as a commodity")
+	}
 	t.Logf("parsed: currency=%d lowSell=%d highBuy=%d sellN=%d buyN=%d median=%d vol24h=%d commodity=%v buyLevels=%d sellLevels=%d increment=%d",
 		d.Currency, d.LowestSellCents, d.HighestBuyCents, d.SellOrderCount,
 		d.BuyOrderCount, d.MedianPriceCents, d.Volume24h, d.Commodity,
 		len(d.BuyOrders), len(d.SellOrders), d.PriceIncrement)
+}
+
+func TestCurrencyIncrement(t *testing.T) {
+	// The step is a property of the currency, not the sampled order book:
+	// cent-granular currencies are 1, whole-major-unit currencies (KZT)
+	// are 100, and unknown currencies default to the safe 1.
+	if got := currencyIncrement(1); got != 1 {
+		t.Errorf("USD (1) increment = %d; want 1", got)
+	}
+	if got := currencyIncrement(currencyKZT); got != 100 {
+		t.Errorf("KZT (%d) increment = %d; want 100", currencyKZT, got)
+	}
+	if got := currencyIncrement(999); got != 1 {
+		t.Errorf("unknown-currency increment = %d; want 1", got)
+	}
 }

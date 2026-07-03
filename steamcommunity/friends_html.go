@@ -191,23 +191,14 @@ func parseInviteRowsIn(doc *html.Node, id, cls string) []FriendBlock {
 // .friend_block_content / .friend_game_link, and the persona state
 // lives on a nested .playerAvatar.<state> div.
 func inviteRowToBlock(n *html.Node) FriendBlock {
-	b := FriendBlock{State: FriendStateOffline}
-	if sid := attr(n, "data-steamid"); sid != "" {
-		if parsed, err := steamid.FromString(sid); err == nil {
-			b.SteamID = parsed
-		}
-	}
+	b := FriendBlock{State: FriendStateOffline, SteamID: steamIDFromAttr(n)}
 	walk(n, func(c *html.Node) bool {
 		if c == n || c.Type != html.ElementNode {
 			return true
 		}
 		switch c.Data {
 		case "img":
-			if b.AvatarURL == "" {
-				if src := attr(c, "src"); strings.Contains(src, "avatars") {
-					b.AvatarURL = src
-				}
-			}
+			captureAvatar(&b, c)
 		case "div", "span":
 			class := attr(c, "class")
 			if hasClass(class, "playerAvatar") {
@@ -228,12 +219,8 @@ func inviteRowToBlock(n *html.Node) FriendBlock {
 
 func blockFromNode(n *html.Node, classes string) FriendBlock {
 	b := FriendBlock{
-		State: friendStateFromClasses(classes),
-	}
-	if sid := attr(n, "data-steamid"); sid != "" {
-		if parsed, err := steamid.FromString(sid); err == nil {
-			b.SteamID = parsed
-		}
+		State:   friendStateFromClasses(classes),
+		SteamID: steamIDFromAttr(n),
 	}
 	walk(n, func(child *html.Node) bool {
 		if child == n || child.Type != html.ElementNode {
@@ -241,11 +228,7 @@ func blockFromNode(n *html.Node, classes string) FriendBlock {
 		}
 		switch child.Data {
 		case "img":
-			if b.AvatarURL == "" {
-				if src := attr(child, "src"); strings.Contains(src, "avatars") {
-					b.AvatarURL = src
-				}
-			}
+			captureAvatar(&b, child)
 		case "div":
 			if hasClass(attr(child, "class"), "friend_block_content") {
 				b.PersonaName = personaNameFromContent(child)
@@ -282,28 +265,53 @@ func personaNameFromContent(n *html.Node) string {
 // for the persona-state CSS modifier and maps it to a typed FriendState.
 // Anything unrecognised falls back to Offline so the UI doesn't render
 // stale "online" badges.
+//
+// A block can carry more than one state token (e.g. "online
+// looking-to-trade"); the more specific intent wins, so the checks run in
+// priority order rather than returning whichever token appears first in
+// the class attribute.
 func friendStateFromClasses(classes string) FriendState {
-	for _, c := range strings.Fields(classes) {
-		switch c {
-		case "online":
-			return FriendStateOnline
-		case "offline":
-			return FriendStateOffline
-		case "in-game":
-			return FriendStateInGame
-		case "away":
-			return FriendStateAway
-		case "busy":
-			return FriendStateBusy
-		case "snooze":
-			return FriendStateSnooze
-		case "looking-to-trade":
-			return FriendStateLookingToTrade
-		case "looking-to-play":
-			return FriendStateLookingToPlay
-		}
+	switch {
+	case hasClass(classes, "in-game"):
+		return FriendStateInGame
+	case hasClass(classes, "looking-to-trade"):
+		return FriendStateLookingToTrade
+	case hasClass(classes, "looking-to-play"):
+		return FriendStateLookingToPlay
+	case hasClass(classes, "snooze"):
+		return FriendStateSnooze
+	case hasClass(classes, "busy"):
+		return FriendStateBusy
+	case hasClass(classes, "away"):
+		return FriendStateAway
+	case hasClass(classes, "online"):
+		return FriendStateOnline
+	case hasClass(classes, "offline"):
+		return FriendStateOffline
 	}
 	return FriendStateOffline
+}
+
+// steamIDFromAttr parses n's data-steamid attribute into a SteamID,
+// returning the zero SteamID when the attribute is absent or unparseable.
+func steamIDFromAttr(n *html.Node) steamid.SteamID {
+	if sid := attr(n, "data-steamid"); sid != "" {
+		if parsed, err := steamid.FromString(sid); err == nil {
+			return parsed
+		}
+	}
+	return 0
+}
+
+// captureAvatar records n's src as the block avatar when n is an <img>
+// pointing at a Steam avatar host and no avatar has been captured yet.
+func captureAvatar(b *FriendBlock, n *html.Node) {
+	if b.AvatarURL != "" {
+		return
+	}
+	if src := attr(n, "src"); strings.Contains(src, "avatars") {
+		b.AvatarURL = src
+	}
 }
 
 func hasClass(classes, want string) bool {

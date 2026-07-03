@@ -181,6 +181,10 @@ func TestGetFriendsHTML_StateClasses(t *testing.T) {
 		{"selectable friend_block_v2 persona looking-to-trade", FriendStateLookingToTrade},
 		{"selectable friend_block_v2 persona looking-to-play", FriendStateLookingToPlay},
 		{"selectable friend_block_v2 persona random-unknown", FriendStateOffline},
+		// Two state tokens: the more specific intent wins over plain "online",
+		// regardless of which token appears first in the class attribute.
+		{"selectable friend_block_v2 persona online looking-to-trade", FriendStateLookingToTrade},
+		{"selectable friend_block_v2 persona online in-game", FriendStateInGame},
 	}
 	for _, tc := range cases {
 		if got := friendStateFromClasses(tc.classes); got != tc.want {

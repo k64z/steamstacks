@@ -99,7 +99,10 @@ func (c *Community) GetMiniProfile(ctx context.Context, sid steamid.SteamID) (Mi
 // GetMiniProfiles batches mini-profile lookups across the given SteamIDs
 // with a small worker pool. Per-ID failures are dropped (caller diffs
 // input vs. output to detect them) so a single private or deleted
-// profile doesn't poison the whole batch.
+// profile doesn't poison the whole batch. If ctx is cancelled before
+// every ID is scheduled, the batch is abandoned and ctx.Err() is
+// returned — rather than a silently truncated result padded with
+// zero-value profiles.
 func (c *Community) GetMiniProfiles(ctx context.Context, ids []steamid.SteamID) ([]MiniProfile, error) {
 	const concurrency = 12
 	if len(ids) == 0 {
@@ -114,6 +117,7 @@ func (c *Community) GetMiniProfiles(ctx context.Context, ids []steamid.SteamID) 
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 
+	cancelled := false
 loop:
 	for i, id := range ids {
 		select {
@@ -121,6 +125,7 @@ loop:
 			// Caller cancelled — stop scheduling. In-flight goroutines
 			// already past sem-acquire will exit via their own ctx
 			// check inside GetMiniProfile.
+			cancelled = true
 			break loop
 		case sem <- struct{}{}:
 		}
@@ -134,6 +139,14 @@ loop:
 		}()
 	}
 	wg.Wait()
+
+	// A cancelled scheduling loop leaves a zero-valued tail in results:
+	// those entries have err==nil and would be appended as phantom
+	// SteamID-0 profiles. Report the cancellation instead of returning a
+	// partial batch the caller can't distinguish from a complete one.
+	if cancelled {
+		return nil, ctx.Err()
+	}
 
 	out := make([]MiniProfile, 0, len(ids))
 	for _, r := range results {

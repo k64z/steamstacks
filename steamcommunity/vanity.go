@@ -74,6 +74,7 @@ var (
 	reProfileURL = regexp.MustCompile(`(?i)steamcommunity\.com/profiles/(\d{17})`)
 	reVanityURL  = regexp.MustCompile(`(?i)steamcommunity\.com/id/([A-Za-z0-9_\-]+)`)
 	reSteamID64  = regexp.MustCompile(`^7656\d{13}$`)
+	reBareSlug   = regexp.MustCompile(`^[A-Za-z0-9_\-]+$`)
 )
 
 // ParseProfileInput classifies a user-entered profile reference. Exactly one
@@ -112,7 +113,7 @@ func ParseProfileInput(s string) (sid steamid.SteamID, vanity string, err error)
 	}
 
 	// Bare slug fallback — only accept characters Steam actually permits in vanity URLs.
-	if regexp.MustCompile(`^[A-Za-z0-9_\-]+$`).MatchString(s) {
+	if reBareSlug.MatchString(s) {
 		return 0, s, nil
 	}
 

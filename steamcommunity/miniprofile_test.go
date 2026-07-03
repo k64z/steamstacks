@@ -2,6 +2,7 @@ package steamcommunity
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -80,5 +81,39 @@ func TestGetMiniProfiles_BatchAndFailureTolerance(t *testing.T) {
 	}
 	if got := count.Load(); got != 3 {
 		t.Errorf("HTTP calls = %d; want 3", got)
+	}
+}
+
+func TestGetMiniProfiles_CancelledContextNoPhantoms(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"persona_name":"ok","avatar_url":"x"}`))
+	}))
+	defer srv.Close()
+
+	c := newTestCommunity(t, srv.URL)
+	c.httpClient.Transport = rewriteHostTransport(srv)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancelled before the batch is scheduled
+
+	ids := make([]steamid.SteamID, 64)
+	for i := range ids {
+		ids[i] = steamid.FromSteamID64(uint64(76561198000000000 + i))
+	}
+
+	out, err := c.GetMiniProfiles(ctx, ids)
+
+	// However the scheduler raced with the cancellation, the result must
+	// never be a partial batch padded with phantom zero-value profiles:
+	// the fix either reports the cancellation as an error (nil result) or
+	// returns only real, non-zero-SteamID profiles.
+	for _, p := range out {
+		if p.SteamID == 0 {
+			t.Fatalf("phantom zero-SteamID profile leaked into output: %+v", p)
+		}
+	}
+	if err != nil && !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v; want context.Canceled or nil", err)
 	}
 }

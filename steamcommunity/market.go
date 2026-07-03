@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -629,8 +630,19 @@ var (
 // stripped page without g_rgWalletInfo to the default Go UA. Returns
 // ErrWalletFeeInfoUnavailable when the block (or its fee minimum) is absent.
 func (c *Community) GetWalletFeeInfo(ctx context.Context) (*WalletFeeInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"https://steamcommunity.com/market/", nil)
+	body, err := c.fetchBrowserPage(ctx, "https://steamcommunity.com/market/")
+	if err != nil {
+		return nil, err
+	}
+	return parseWalletFeeInfo(body)
+}
+
+// fetchBrowserPage GETs pageURL with a common-browser User-Agent and
+// returns the response body. Steam serves a stripped page (without the
+// embedded user/wallet scripts) to the Go default UA on several market
+// routes, so the fetches that need that embedded data go through here.
+func (c *Community) fetchBrowserPage(ctx context.Context, pageURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("new request: %w", err)
 	}
@@ -651,7 +663,7 @@ func (c *Community) GetWalletFeeInfo(ctx context.Context) (*WalletFeeInfo, error
 	if resp.StatusCode != http.StatusOK {
 		return nil, steamapi.HTTPStatusError(resp.StatusCode, body)
 	}
-	return parseWalletFeeInfo(body)
+	return body, nil
 }
 
 // parseWalletFeeInfo extracts the fee fields from a /market/ page body. Split
@@ -763,28 +775,9 @@ type MarketOrderLevel struct {
 func (c *Community) GetMarketItemPageData(ctx context.Context, appID int, marketHashName string) (*MarketItemPageData, error) {
 	reqURL := "https://steamcommunity.com/market/listings/" +
 		strconv.Itoa(appID) + "/" + url.PathEscape(marketHashName)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	body, err := c.fetchBrowserPage(ctx, reqURL)
 	if err != nil {
-		return nil, fmt.Errorf("new request: %w", err)
-	}
-	// A common-browser UA avoids the stripped "install Steam" fallback
-	// page Steam serves to the Go default UA on some listing routes.
-	req.Header.Set("User-Agent", browserUserAgent)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("do: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, steamapi.HTTPStatusError(resp.StatusCode, body)
+		return nil, err
 	}
 	return parseMarketItemPage(body)
 }
@@ -805,10 +798,6 @@ var titleRE = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 var (
 	taxRateRE = regexp.MustCompile(`"tradefee_taxrate":\s*([0-9.]+)`)
 	addTaxRE  = regexp.MustCompile(`"tradefee_addtax":\s*(true|false)`)
-	// feeMinimumRE matches Steam's per-currency minimum fee from the
-	// logged-in wallet_info block. The value may be a JSON number or a
-	// quoted string.
-	feeMinimumRE = regexp.MustCompile(`"wallet_fee_minimum":\s*"?([0-9]+)"?`)
 )
 
 // parseMarketItemPage extracts the order book + price history from
@@ -858,7 +847,7 @@ func parseMarketItemPage(body []byte) (*MarketItemPageData, error) {
 			out.TaxRate = v
 		}
 	}
-	if m := feeMinimumRE.FindStringSubmatch(s); len(m) == 2 {
+	if m := walletFeeMinimumRE.FindStringSubmatch(s); len(m) == 2 {
 		if v, err := strconv.Atoi(m[1]); err == nil {
 			out.FeeMinimum = v
 		}
@@ -903,7 +892,7 @@ func parseMarketItemPage(body []byte) (*MarketItemPageData, error) {
 			}
 			if n := len(ph.Prices); n > 0 {
 				last := ph.Prices[n-1]
-				out.MedianPriceCents = int(last.PriceMedian*100 + 0.5)
+				out.MedianPriceCents = int(math.Round(last.PriceMedian * 100))
 				// Steam keeps hourly granularity for recent history;
 				// sum purchases over the trailing 24h of that history.
 				cutoff := last.Time - 24*3600
@@ -916,17 +905,17 @@ func parseMarketItemPage(body []byte) (*MarketItemPageData, error) {
 			}
 		case "description":
 			var d struct {
-				Commodity int `json:"commodity"`
+				Commodity bool `json:"commodity"`
 			}
 			if err := json.Unmarshal(q.State.Data, &d); err == nil {
-				out.Commodity = d.Commodity == 1
+				out.Commodity = d.Commodity
 			}
 		}
 	}
 	if !foundOrderbook {
 		return nil, errors.New("market: orderbook data not present in page state")
 	}
-	out.PriceIncrement = priceIncrement(out.BuyOrders, out.SellOrders)
+	out.PriceIncrement = currencyIncrement(out.Currency)
 	// wallet_fee_minimum isn't exposed in the page's React state, so
 	// fall back to the known per-currency table when the regex above
 	// found nothing.
@@ -955,37 +944,24 @@ func feeMinimumForCurrency(currency int) int {
 	}
 }
 
-// priceIncrement infers the market's minimum price step for this
-// currency: the GCD of every order-book level price. Every standing
-// order sits at a price Steam accepted, so their GCD is the listing
-// granularity (1 for cent-granular currencies, 100 for whole-major-
-// unit currencies like KZT). Falls back to 1 when the book is too
-// thin to trust the GCD.
-func priceIncrement(buy, sell []MarketOrderLevel) int {
-	g, n := 0, 0
-	for _, lvl := range buy {
-		if lvl.PriceCents > 0 {
-			g = gcdInt(g, lvl.PriceCents)
-			n++
-		}
-	}
-	for _, lvl := range sell {
-		if lvl.PriceCents > 0 {
-			g = gcdInt(g, lvl.PriceCents)
-			n++
-		}
-	}
-	if n < 4 || g < 1 {
+// currencyIncrement returns the market's minimum listing price step, in
+// minor units, for the given Steam currency code. It is a property of the
+// currency, not the order book: Steam prices most currencies to the cent
+// (step 1) and a few weak currencies in whole major units (KZT: step 100).
+//
+// Inferring the step from the GCD of sampled order-book prices — as an
+// earlier version did — over-reports for cent-granular currencies whenever
+// the sampled prices happen to share a common factor (e.g. an all-even
+// USD book yields a GCD of 2), which would wrongly forbid odd-cent
+// listings. Unknown currencies default to 1: under-reporting the step is
+// harmless (1 is always an accepted multiple) whereas over-reporting is not.
+func currencyIncrement(currency int) int {
+	switch currency {
+	case currencyKZT:
+		return 100
+	default:
 		return 1
 	}
-	return g
-}
-
-func gcdInt(a, b int) int {
-	for b != 0 {
-		a, b = b, a%b
-	}
-	return a
 }
 
 // marketQueryKind classifies a React-Query key like
@@ -1011,7 +987,7 @@ func pageTitle(body []byte) string {
 	if len(m) < 2 {
 		return "no <title>"
 	}
-	return strings.Join(strings.Fields(string(m[1])), " ")
+	return normalizeWhitespace(string(m[1]))
 }
 
 // pairsToLevels turns Steam's flat [price0,count0,price1,count1,…]
