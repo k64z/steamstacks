@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 )
@@ -664,56 +663,6 @@ func TestGetMarketListingsSurfacesSteamFailure(t *testing.T) {
 	}
 }
 
-func TestParseMarketItemPage(t *testing.T) {
-	body, err := os.ReadFile("testdata/market_listing_page.html")
-	if err != nil {
-		t.Fatalf("read fixture: %v", err)
-	}
-	d, err := parseMarketItemPage(body)
-	if err != nil {
-		t.Fatalf("parseMarketItemPage: %v", err)
-	}
-	if d.LowestSellCents <= 0 || d.HighestBuyCents <= 0 {
-		t.Errorf("expected non-zero order book, got lowSell=%d highBuy=%d",
-			d.LowestSellCents, d.HighestBuyCents)
-	}
-	if d.SellOrderCount <= 0 || d.BuyOrderCount <= 0 {
-		t.Errorf("expected non-zero order counts, got sell=%d buy=%d",
-			d.SellOrderCount, d.BuyOrderCount)
-	}
-	if d.MedianPriceCents <= 0 {
-		t.Errorf("expected non-zero median, got %d", d.MedianPriceCents)
-	}
-	if d.Currency == 0 {
-		t.Error("expected a currency code")
-	}
-	if len(d.BuyOrders) == 0 || len(d.SellOrders) == 0 {
-		t.Fatalf("expected order-book depth, got buy=%d sell=%d levels",
-			len(d.BuyOrders), len(d.SellOrders))
-	}
-	// BuyOrders lead highest-price-first, SellOrders lowest-price-first.
-	if d.BuyOrders[0].PriceCents != d.HighestBuyCents {
-		t.Errorf("BuyOrders[0] price %d != HighestBuyCents %d",
-			d.BuyOrders[0].PriceCents, d.HighestBuyCents)
-	}
-	if d.SellOrders[0].PriceCents != d.LowestSellCents {
-		t.Errorf("SellOrders[0] price %d != LowestSellCents %d",
-			d.SellOrders[0].PriceCents, d.LowestSellCents)
-	}
-	if d.PriceIncrement < 1 {
-		t.Errorf("expected a price increment >= 1, got %d", d.PriceIncrement)
-	}
-	// The fixture item is a commodity; Steam serializes the flag as a JSON
-	// bool, so a regression to an int-typed decode would leave this false.
-	if !d.Commodity {
-		t.Error("expected the fixture item to parse as a commodity")
-	}
-	t.Logf("parsed: currency=%d lowSell=%d highBuy=%d sellN=%d buyN=%d median=%d vol24h=%d commodity=%v buyLevels=%d sellLevels=%d increment=%d",
-		d.Currency, d.LowestSellCents, d.HighestBuyCents, d.SellOrderCount,
-		d.BuyOrderCount, d.MedianPriceCents, d.Volume24h, d.Commodity,
-		len(d.BuyOrders), len(d.SellOrders), d.PriceIncrement)
-}
-
 func TestCurrencyIncrement(t *testing.T) {
 	// The step is a property of the currency, not the sampled order book:
 	// cent-granular currencies are 1, whole-major-unit currencies (KZT)
@@ -726,5 +675,120 @@ func TestCurrencyIncrement(t *testing.T) {
 	}
 	if got := currencyIncrement(999); got != 1 {
 		t.Errorf("unknown-currency increment = %d; want 1", got)
+	}
+}
+
+func TestGetMarketItemPageData(t *testing.T) {
+	var sawOrderbook, sawPriceHistory bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/market/orderbook":
+			sawOrderbook = true
+			if got := r.Header.Get("x-valve-request-type"); got != "queryAction" {
+				t.Errorf("x-valve-request-type=%q, want queryAction", got)
+			}
+			if got := r.URL.Query().Get("q"); got != "Load" {
+				t.Errorf("q=%q, want Load", got)
+			}
+			if got := r.URL.Query().Get("qp"); got != `[440,"Test Item"]` {
+				t.Errorf("qp=%q, want [440,\"Test Item\"]", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"success":true,"data":{` +
+				`"amtMaxBuyOrder":197,"amtMinSellOrder":204,"eCurrency":1,` +
+				`"cBuyOrders":500,"cSellOrders":300,` +
+				`"rgCompactBuyOrders":[197,2,196,5],"rgCompactSellOrders":[204,3,205,7]}}`))
+		case r.URL.Path == "/market/pricehistory/":
+			sawPriceHistory = true
+			if got := r.URL.Query().Get("market_hash_name"); got != "Test Item" {
+				t.Errorf("market_hash_name=%q, want Test Item", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			// Three hourly buckets; the trailing-24h window covers all of
+			// them, and the median comes from the newest one.
+			_, _ = w.Write([]byte(`{"success":true,"prices":[` +
+				`["Jul 09 2026 20: +0",1.90,"11"],` +
+				`["Jul 10 2026 22: +0",1.95,"12"],` +
+				`["Jul 10 2026 23: +0",2.05,"30"]]}`))
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestCommunity(t, srv.URL)
+	c.httpClient.Transport = rewriteHostTransport(srv)
+
+	d, err := c.GetMarketItemPageData(context.Background(), 440, "Test Item")
+	if err != nil {
+		t.Fatalf("GetMarketItemPageData: %v", err)
+	}
+	if !sawOrderbook || !sawPriceHistory {
+		t.Fatalf("endpoints hit: orderbook=%v pricehistory=%v", sawOrderbook, sawPriceHistory)
+	}
+	if d.HighestBuyCents != 197 || d.LowestSellCents != 204 {
+		t.Errorf("spread = %d/%d, want 197/204", d.HighestBuyCents, d.LowestSellCents)
+	}
+	if d.BuyOrderCount != 500 || d.SellOrderCount != 300 {
+		t.Errorf("counts = %d/%d, want 500/300", d.BuyOrderCount, d.SellOrderCount)
+	}
+	if len(d.BuyOrders) != 2 || d.BuyOrders[0].PriceCents != 197 || d.BuyOrders[0].Count != 2 {
+		t.Errorf("unexpected BuyOrders: %+v", d.BuyOrders)
+	}
+	if len(d.SellOrders) != 2 || d.SellOrders[1].PriceCents != 205 || d.SellOrders[1].Count != 7 {
+		t.Errorf("unexpected SellOrders: %+v", d.SellOrders)
+	}
+	if d.Currency != 1 {
+		t.Errorf("currency = %d, want 1", d.Currency)
+	}
+	if d.MedianPriceCents != 205 {
+		t.Errorf("median = %d, want 205", d.MedianPriceCents)
+	}
+	// The Jul 09 20:00 bucket is older than 24h before the last (Jul 10
+	// 23:00) bucket, so only the two Jul 10 buckets count.
+	if d.Volume24h != 42 {
+		t.Errorf("volume24h = %d, want 42", d.Volume24h)
+	}
+	if d.PriceIncrement != 1 || d.FeeMinimum != 1 {
+		t.Errorf("increment/feeMin = %d/%d, want 1/1", d.PriceIncrement, d.FeeMinimum)
+	}
+}
+
+func TestGetMarketItemPageDataNoHistory(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/market/orderbook":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"success":true,"data":{` +
+				`"amtMaxBuyOrder":100,"amtMinSellOrder":110,"eCurrency":37,` +
+				`"cBuyOrders":1,"cSellOrders":1,` +
+				`"rgCompactBuyOrders":[100,1],"rgCompactSellOrders":[110,1]}}`))
+		case r.URL.Path == "/market/pricehistory/":
+			// The classic endpoint is login-gated; anonymous sessions get
+			// a bare array. History must degrade to zero, not fail the fetch.
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestCommunity(t, srv.URL)
+	c.httpClient.Transport = rewriteHostTransport(srv)
+
+	d, err := c.GetMarketItemPageData(context.Background(), 440, "Test Item")
+	if err != nil {
+		t.Fatalf("GetMarketItemPageData: %v", err)
+	}
+	if d.LowestSellCents != 110 || d.HighestBuyCents != 100 {
+		t.Errorf("spread = %d/%d, want 100/110", d.HighestBuyCents, d.LowestSellCents)
+	}
+	if d.MedianPriceCents != 0 || d.Volume24h != 0 {
+		t.Errorf("history = %d/%d, want 0/0 when pricehistory unavailable", d.MedianPriceCents, d.Volume24h)
+	}
+	// KZT (37): whole-tenge increment and the empirical 500 fee floor.
+	if d.PriceIncrement != 100 || d.FeeMinimum != 500 {
+		t.Errorf("increment/feeMin = %d/%d, want 100/500", d.PriceIncrement, d.FeeMinimum)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/k64z/steamstacks/steamapi"
 )
@@ -702,9 +703,12 @@ func parseWalletFeeInfo(body []byte) (*WalletFeeInfo, error) {
 	return out, nil
 }
 
-// MarketItemPageData is the order-book + recent-price summary parsed
-// from the React-Query state Steam embeds in a /market/listings/ page
-// under window.SSR.renderContext.
+// MarketItemPageData is one item's order-book + recent-price summary,
+// fetched from the JSON loaders the React market frontend uses (the
+// /market/orderbook queryAction route + the classic
+// /market/pricehistory/ endpoint). The name is historical — until
+// Steam's 2026-07 client-shell migration this was parsed from the
+// React-Query state embedded in the /market/listings/ page.
 //
 // All *Cents fields are integer minor units (cents/kopecks/tiyin) in
 // Currency. HighestBuyCents and LowestSellCents are buyer-facing
@@ -712,7 +716,7 @@ func parseWalletFeeInfo(body []byte) (*WalletFeeInfo, error) {
 // book. MedianPriceCents is the most recent price-history median;
 // Volume24h is the unit count sold in the trailing 24h of history.
 type MarketItemPageData struct {
-	// Currency is the Steam currency code Steam rendered the page in.
+	// Currency is the Steam currency code the order book is priced in.
 	// Authenticated requests get the account's wallet currency.
 	Currency int
 
@@ -730,15 +734,6 @@ type MarketItemPageData struct {
 	BuyOrders  []MarketOrderLevel
 	SellOrders []MarketOrderLevel
 
-	// AddTax / TaxRate carry Steam's regional market tax (e.g.
-	// Kazakhstan VAT). When AddTax is true and TaxRate > 0, the buyer
-	// pays an extra `floor(fee * TaxRate/100 + 0.5)` on top of the
-	// Steam + publisher fee — see Steam's own market JS (the `xa`
-	// helper). TaxRate is a whole-number percent (12 == 12%). Zero
-	// when the page carries no tax config (most regions).
-	AddTax  bool
-	TaxRate float64
-
 	// PriceIncrement is the smallest price step the market accepts
 	// for this currency, in minor units — the GCD of every order-book
 	// level price. 1 for cent-granular currencies (USD/EUR/…); 100 for
@@ -751,12 +746,9 @@ type MarketItemPageData struct {
 	// floor each fee component is clamped up to (`max(net*pct,
 	// FeeMinimum)`). 1 for USD; larger for weak currencies (KZT ~500),
 	// so cheap items pay a flat minimum fee rather than the percentage.
-	// 0 when the page carries no wallet info (anonymous fetch).
+	// Always sourced from the hand-observed feeMinimumForCurrency table
+	// (the market JSON loaders don't expose it).
 	FeeMinimum int
-
-	// Commodity is true for stackable, fungible items (metal, keys)
-	// whose listings Steam pools into one order book.
-	Commodity bool
 }
 
 // MarketOrderLevel is one price rung of the order book: the number of
@@ -766,163 +758,185 @@ type MarketOrderLevel struct {
 	Count      int
 }
 
-// GetMarketItemPageData fetches a /market/listings/ page and parses
-// the React-Query cache Steam embeds in it for the item's live order
-// book and recent price history. One HTTP round-trip, no item_nameid
-// lookup. Authenticated requests (cookie jar populated) get the data
-// in the account's wallet currency; anonymous requests get Steam's
-// geo default.
+// GetMarketItemPageData fetches an item's live order book and recent
+// price history from the JSON loaders the React market frontend uses
+// (no /market/listings/ page fetch — Steam has been converting that
+// page to a client-side shell without embedded market data since
+// 2026-07-10). Authenticated requests (cookie jar populated) get the
+// data in the account's wallet currency; anonymous requests get
+// Steam's geo default. Median/volume are best-effort: the classic
+// /market/pricehistory/ endpoint is login-gated (anonymous sessions
+// get a bare `[]`), and history failures degrade to zero instead of
+// failing the fetch.
 func (c *Community) GetMarketItemPageData(ctx context.Context, appID int, marketHashName string) (*MarketItemPageData, error) {
-	reqURL := "https://steamcommunity.com/market/listings/" +
-		strconv.Itoa(appID) + "/" + url.PathEscape(marketHashName)
-	body, err := c.fetchBrowserPage(ctx, reqURL)
+	ob, err := c.fetchOrderbookQueryAction(ctx, appID, marketHashName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("market: fetch orderbook: %w", err)
 	}
-	return parseMarketItemPage(body)
+	out := &MarketItemPageData{}
+	out.applyOrderbook(ob)
+	_ = c.fillPriceHistoryClassic(ctx, appID, marketHashName, out)
+	finalizeMarketItemPageData(out)
+	return out, nil
 }
 
-// renderCtxMarker prefixes the React SSR state blob. The value after
-// it is `JSON.parse("<escaped json>")` — i.e. the argument is a JSON
-// string literal whose decoded contents are themselves JSON.
-const renderCtxMarker = "window.SSR.renderContext=JSON.parse("
-
-// titleRE pulls the first <title> contents out of an HTML body so a
-// parse failure can attach a one-line hint about what Steam served.
-var titleRE = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
-
-// taxRateRE / addTaxRE match Steam's regional market-tax config. The
-// values live in the page's server-info block (only present for a
-// logged-in user in a taxed region), so the patterns scan the whole
-// page body rather than a single embedded blob.
-var (
-	taxRateRE = regexp.MustCompile(`"tradefee_taxrate":\s*([0-9.]+)`)
-	addTaxRE  = regexp.MustCompile(`"tradefee_addtax":\s*(true|false)`)
-)
-
-// parseMarketItemPage extracts the order book + price history from
-// the embedded React-Query cache. Split out from the HTTP path so
-// unit tests can feed a saved page body directly.
-func parseMarketItemPage(body []byte) (*MarketItemPageData, error) {
-	s := string(body)
-	idx := strings.Index(s, renderCtxMarker)
-	if idx < 0 {
-		return nil, fmt.Errorf("market: renderContext not found on page (%s)", pageTitle(body))
-	}
-	// The argument to JSON.parse is a JSON string literal; decoding it
-	// once yields the renderContext JSON text.
-	dec := json.NewDecoder(strings.NewReader(s[idx+len(renderCtxMarker):]))
-	var renderCtxJSON string
-	if err := dec.Decode(&renderCtxJSON); err != nil {
-		return nil, fmt.Errorf("market: decode renderContext arg: %w", err)
-	}
-	// renderContext.queryData is *itself* a JSON string (double-encoded).
-	var rc struct {
-		QueryData string `json:"queryData"`
-	}
-	if err := json.Unmarshal([]byte(renderCtxJSON), &rc); err != nil {
-		return nil, fmt.Errorf("market: decode renderContext: %w", err)
-	}
-	var qd struct {
-		Queries []struct {
-			QueryKey []json.RawMessage `json:"queryKey"`
-			State    struct {
-				Data json.RawMessage `json:"data"`
-			} `json:"state"`
-		} `json:"queries"`
-	}
-	if err := json.Unmarshal([]byte(rc.QueryData), &qd); err != nil {
-		return nil, fmt.Errorf("market: decode queryData: %w", err)
-	}
-
-	out := &MarketItemPageData{}
-	// Regional market tax (e.g. Kazakhstan VAT). Scanned over the whole
-	// page body — the config sits in the server-info block, not the
-	// renderContext blob.
-	if m := addTaxRE.FindString(s); m != "" {
-		out.AddTax = strings.HasSuffix(m, "true")
-	}
-	if m := taxRateRE.FindStringSubmatch(s); len(m) == 2 {
-		if v, err := strconv.ParseFloat(m[1], 64); err == nil {
-			out.TaxRate = v
-		}
-	}
-	if m := walletFeeMinimumRE.FindStringSubmatch(s); len(m) == 2 {
-		if v, err := strconv.Atoi(m[1]); err == nil {
-			out.FeeMinimum = v
-		}
-	}
-	foundOrderbook := false
-	for _, q := range qd.Queries {
-		switch marketQueryKind(q.QueryKey) {
-		case "orderbook":
-			var ob struct {
-				AmtMaxBuyOrder  int   `json:"amtMaxBuyOrder"`
-				AmtMinSellOrder int   `json:"amtMinSellOrder"`
-				ECurrency       int   `json:"eCurrency"`
-				CBuyOrders      int   `json:"cBuyOrders"`
-				CSellOrders     int   `json:"cSellOrders"`
-				RgCompactBuy    []int `json:"rgCompactBuyOrders"`
-				RgCompactSell   []int `json:"rgCompactSellOrders"`
-			}
-			if err := json.Unmarshal(q.State.Data, &ob); err != nil {
-				continue
-			}
-			out.HighestBuyCents = ob.AmtMaxBuyOrder
-			out.LowestSellCents = ob.AmtMinSellOrder
-			out.BuyOrderCount = ob.CBuyOrders
-			out.SellOrderCount = ob.CSellOrders
-			out.BuyOrders = pairsToLevels(ob.RgCompactBuy)
-			out.SellOrders = pairsToLevels(ob.RgCompactSell)
-			if ob.ECurrency != 0 {
-				out.Currency = ob.ECurrency
-			}
-			foundOrderbook = true
-		case "pricehistory":
-			var ph struct {
-				ECurrency int `json:"ecurrency"`
-				Prices    []struct {
-					Time        int64   `json:"time"`
-					PriceMedian float64 `json:"price_median"`
-					Purchases   int     `json:"purchases"`
-				} `json:"prices"`
-			}
-			if err := json.Unmarshal(q.State.Data, &ph); err != nil {
-				continue
-			}
-			if n := len(ph.Prices); n > 0 {
-				last := ph.Prices[n-1]
-				out.MedianPriceCents = int(math.Round(last.PriceMedian * 100))
-				// Steam keeps hourly granularity for recent history;
-				// sum purchases over the trailing 24h of that history.
-				cutoff := last.Time - 24*3600
-				for i := n - 1; i >= 0 && ph.Prices[i].Time >= cutoff; i-- {
-					out.Volume24h += ph.Prices[i].Purchases
-				}
-			}
-			if out.Currency == 0 && ph.ECurrency != 0 {
-				out.Currency = ph.ECurrency
-			}
-		case "description":
-			var d struct {
-				Commodity bool `json:"commodity"`
-			}
-			if err := json.Unmarshal(q.State.Data, &d); err == nil {
-				out.Commodity = d.Commodity
-			}
-		}
-	}
-	if !foundOrderbook {
-		return nil, errors.New("market: orderbook data not present in page state")
-	}
+// finalizeMarketItemPageData derives the fields that depend on the
+// resolved currency, whichever path (page state or queryAction
+// fallback) supplied the order book.
+func finalizeMarketItemPageData(out *MarketItemPageData) {
 	out.PriceIncrement = currencyIncrement(out.Currency)
 	// wallet_fee_minimum isn't exposed in the page's React state, so
-	// fall back to the known per-currency table when the regex above
+	// fall back to the known per-currency table when the page regex
 	// found nothing.
 	if out.FeeMinimum == 0 {
 		out.FeeMinimum = feeMinimumForCurrency(out.Currency)
 	}
-	return out, nil
+}
+
+// marketOrderbookState is the ["market","orderbook",…] React-Query
+// payload — identical whether it arrives dehydrated in the page's SSR
+// state or from the /market/orderbook queryAction route. The rgCompact
+// slices are flat [price, count, price, count, …] pairs.
+type marketOrderbookState struct {
+	AmtMaxBuyOrder  int   `json:"amtMaxBuyOrder"`
+	AmtMinSellOrder int   `json:"amtMinSellOrder"`
+	ECurrency       int   `json:"eCurrency"`
+	CBuyOrders      int   `json:"cBuyOrders"`
+	CSellOrders     int   `json:"cSellOrders"`
+	RgCompactBuy    []int `json:"rgCompactBuyOrders"`
+	RgCompactSell   []int `json:"rgCompactSellOrders"`
+}
+
+func (out *MarketItemPageData) applyOrderbook(ob *marketOrderbookState) {
+	out.HighestBuyCents = ob.AmtMaxBuyOrder
+	out.LowestSellCents = ob.AmtMinSellOrder
+	out.BuyOrderCount = ob.CBuyOrders
+	out.SellOrderCount = ob.CSellOrders
+	out.BuyOrders = pairsToLevels(ob.RgCompactBuy)
+	out.SellOrders = pairsToLevels(ob.RgCompactSell)
+	if ob.ECurrency != 0 {
+		out.Currency = ob.ECurrency
+	}
+}
+
+// fetchOrderbookQueryAction fetches the order book from the JSON
+// loader route the client-shell market page uses:
+// GET /market/orderbook?q=Load&qp=[appid,"name"] with an
+// x-valve-request-type: queryAction header (without the header Steam
+// serves the HTML page instead). Works anonymously (geo-default
+// currency); authenticated sessions get the wallet currency.
+func (c *Community) fetchOrderbookQueryAction(ctx context.Context, appID int, marketHashName string) (*marketOrderbookState, error) {
+	qp, err := json.Marshal([]any{appID, marketHashName})
+	if err != nil {
+		return nil, fmt.Errorf("marshal qp: %w", err)
+	}
+	q := url.Values{"q": {"Load"}, "qp": {string(qp)}}
+	reqURL := "https://steamcommunity.com/market/orderbook?" + q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("new request: %w", err)
+	}
+	req.Header.Set("User-Agent", browserUserAgent)
+	req.Header.Set("x-valve-request-type", "queryAction")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("do: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, steamapi.HTTPStatusError(resp.StatusCode, body)
+	}
+	var envelope struct {
+		Success bool                  `json:"success"`
+		Data    *marketOrderbookState `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, fmt.Errorf("decode orderbook response: %w", err)
+	}
+	if !envelope.Success || envelope.Data == nil {
+		return nil, errors.New("orderbook response missing data")
+	}
+	return envelope.Data, nil
+}
+
+// priceHistoryTimeLayout parses the classic /market/pricehistory/
+// timestamps ("Jul 10 2026 23: +0" — hourly buckets for recent
+// history, daily further back; the "+0" zone is a fixed literal).
+const priceHistoryTimeLayout = "Jan 02 2006 15: +0"
+
+// fillPriceHistoryClassic populates MedianPriceCents/Volume24h from
+// the classic /market/pricehistory/ endpoint, mirroring the math the
+// page-state path applies to its pricehistory query. The endpoint is
+// login-gated: anonymous sessions get a bare `[]`, which surfaces here
+// as a decode error the caller treats as "history unavailable".
+func (c *Community) fillPriceHistoryClassic(ctx context.Context, appID int, marketHashName string, out *MarketItemPageData) error {
+	q := url.Values{
+		"appid":            {strconv.Itoa(appID)},
+		"market_hash_name": {marketHashName},
+	}
+	body, err := c.fetchBrowserPage(ctx, "https://steamcommunity.com/market/pricehistory/?"+q.Encode())
+	if err != nil {
+		return err
+	}
+	var ph struct {
+		Success bool                `json:"success"`
+		Prices  [][]json.RawMessage `json:"prices"`
+	}
+	if err := json.Unmarshal(body, &ph); err != nil {
+		return fmt.Errorf("decode pricehistory response: %w", err)
+	}
+	if !ph.Success || len(ph.Prices) == 0 {
+		return errors.New("pricehistory response missing prices")
+	}
+	type point struct {
+		ts        int64
+		median    float64
+		purchases int
+	}
+	points := make([]point, 0, len(ph.Prices))
+	for _, row := range ph.Prices {
+		// Each row is a mixed-type triple: ["Jul 10 2026 23: +0", 178.449, "2074"].
+		if len(row) != 3 {
+			continue
+		}
+		var (
+			when   string
+			median float64
+			count  string
+		)
+		if json.Unmarshal(row[0], &when) != nil ||
+			json.Unmarshal(row[1], &median) != nil ||
+			json.Unmarshal(row[2], &count) != nil {
+			continue
+		}
+		t, err := time.Parse(priceHistoryTimeLayout, when)
+		if err != nil {
+			continue
+		}
+		n, err := strconv.Atoi(count)
+		if err != nil {
+			continue
+		}
+		points = append(points, point{ts: t.Unix(), median: median, purchases: n})
+	}
+	if len(points) == 0 {
+		return errors.New("pricehistory response had no parseable rows")
+	}
+	last := points[len(points)-1]
+	out.MedianPriceCents = int(math.Round(last.median * 100))
+	// Steam keeps hourly granularity for recent history; sum purchases
+	// over the trailing 24h of that history.
+	cutoff := last.ts - 24*3600
+	out.Volume24h = 0
+	for i := len(points) - 1; i >= 0 && points[i].ts >= cutoff; i-- {
+		out.Volume24h += points[i].purchases
+	}
+	return nil
 }
 
 // currencyKZT is the Steam currency code for Kazakhstani tenge.
@@ -962,32 +976,6 @@ func currencyIncrement(currency int) int {
 	default:
 		return 1
 	}
-}
-
-// marketQueryKind classifies a React-Query key like
-// ["market","orderbook",440,"Backpack Expander"] — returns the second
-// element ("orderbook"/"pricehistory"/"description") when the first is
-// "market", else "".
-func marketQueryKind(key []json.RawMessage) string {
-	if len(key) < 2 {
-		return ""
-	}
-	var ns, kind string
-	if json.Unmarshal(key[0], &ns) != nil || ns != "market" {
-		return ""
-	}
-	if json.Unmarshal(key[1], &kind) != nil {
-		return ""
-	}
-	return kind
-}
-
-func pageTitle(body []byte) string {
-	m := titleRE.FindSubmatch(body)
-	if len(m) < 2 {
-		return "no <title>"
-	}
-	return normalizeWhitespace(string(m[1]))
 }
 
 // pairsToLevels turns Steam's flat [price0,count0,price1,count1,…]
