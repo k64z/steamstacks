@@ -630,12 +630,133 @@ var (
 // /market/ home page. A browser User-Agent is required — Steam serves a
 // stripped page without g_rgWalletInfo to the default Go UA. Returns
 // ErrWalletFeeInfoUnavailable when the block (or its fee minimum) is absent.
+//
+// This is an expensive read: /market/ is the most aggressively rate-limited
+// route on steamcommunity.com, and a 429 here also poisons every other
+// community fetch from the same IP. Callers that only need the balance
+// should use GetWalletBalance, which is a ~200-byte JSON read on a
+// different host. As of 2026-07 g_rgWalletInfo survives ONLY on /market/ —
+// verified absent from /market/search, /market/listings/<app>/<name>,
+// /market/mylistings, the store front page and /steamaccount/addfunds —
+// so there is no cheaper source for the *fee* fields.
 func (c *Community) GetWalletFeeInfo(ctx context.Context) (*WalletFeeInfo, error) {
 	body, err := c.fetchBrowserPage(ctx, "https://steamcommunity.com/market/")
 	if err != nil {
 		return nil, err
 	}
 	return parseWalletFeeInfo(body)
+}
+
+// WalletBalance is the authenticated account's wallet funds, read from the
+// store's add-funds JSON endpoint rather than from g_rgWalletInfo. It carries
+// no fee fields — those live only on the /market/ home page (GetWalletFeeInfo).
+type WalletBalance struct {
+	// Balance is the wallet's current funds in minor units of CurrencyCode.
+	Balance int
+	// CurrencyCode is the ISO 4217 code Steam reports ("RUB", "USD").
+	CurrencyCode string
+	// Currency is CurrencyCode mapped to Steam's numeric currency id, or 0
+	// when the code isn't in walletCurrencyIDs. Treat 0 as "unverified" —
+	// it is NOT USD.
+	Currency int
+	// CountryCode is the wallet's country ("RU"); best-effort, may be empty.
+	CountryCode string
+}
+
+// ErrWalletBalanceUnavailable is returned when getfundwalletinfo answers
+// without a user_wallet block — a logged-out session, or an account with no
+// wallet in this region.
+var ErrWalletBalanceUnavailable = errors.New("market: user_wallet not present in getfundwalletinfo response")
+
+// fundWalletInfoResponse mirrors the JSON shape of
+// store.steampowered.com/api/getfundwalletinfo. Only the fields we use are
+// modelled; the rest of the payload drives the store's add-funds picker.
+// Amounts are stringified minor units, as everywhere else in Steam's economy.
+type fundWalletInfoResponse struct {
+	Success     int    `json:"success"`
+	Currency    string `json:"currency"`
+	CountryCode string `json:"country_code"`
+	UserWallet  *struct {
+		Amount   string `json:"amount"`
+		Currency string `json:"currency"`
+	} `json:"user_wallet"`
+}
+
+// walletCurrencyIDs maps the ISO codes getfundwalletinfo returns onto Steam's
+// numeric currency ids (ECurrencyCode — see steamapi.xpaw.me), which is what
+// g_rgWalletInfo and the rest of the market API speak. Codes absent here
+// resolve to 0 so a caller can tell "we couldn't verify the currency" from a
+// positive match; never guess, because a wrong id mislabels real money.
+var walletCurrencyIDs = map[string]int{
+	"USD": 1, "GBP": 2, "EUR": 3, "CHF": 4, "RUB": 5, "PLN": 6,
+	"BRL": 7, "JPY": 8, "NOK": 9, "IDR": 10, "MYR": 11, "PHP": 12,
+	"SGD": 13, "THB": 14, "VND": 15, "KRW": 16, "TRY": 17, "UAH": 18,
+	"MXN": 19, "CAD": 20, "AUD": 21, "NZD": 22, "CNY": 23, "INR": 24,
+	"CLP": 25, "PEN": 26, "COP": 27, "ZAR": 28, "HKD": 29, "TWD": 30,
+	"SAR": 31, "AED": 32, "SEK": 33, "ARS": 34, "ILS": 35, "BYN": 36,
+	"KZT": 37, "KWD": 38, "QAR": 39, "CRC": 40, "UYU": 41, "BGN": 42,
+	"HRK": 43, "CZK": 44, "DKK": 45, "HUF": 46, "RON": 47,
+}
+
+// GetWalletBalance fetches the authenticated account's wallet balance from
+// store.steampowered.com/api/getfundwalletinfo — the JSON the store's
+// add-funds flow reads. Two reasons to prefer it over GetWalletFeeInfo when
+// only the balance is wanted: the response is ~200 bytes rather than a full
+// market home page, and it lives on store.steampowered.com, a different host
+// from steamcommunity.com and therefore a different rate-limit bucket, so
+// polling it can't 429 the market fetches. The session seeds login cookies
+// for both hosts (steamsession/webcookies.go), so no extra auth is needed.
+func (c *Community) GetWalletBalance(ctx context.Context) (*WalletBalance, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"https://store.steampowered.com/api/getfundwalletinfo", nil)
+	if err != nil {
+		return nil, fmt.Errorf("new request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("User-Agent", browserUserAgent)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("do: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, steamapi.HTTPStatusError(resp.StatusCode, body)
+	}
+	return parseWalletBalance(body)
+}
+
+// parseWalletBalance decodes a getfundwalletinfo payload. Split out so tests
+// can feed a saved response directly.
+func parseWalletBalance(body []byte) (*WalletBalance, error) {
+	var r fundWalletInfoResponse
+	if err := json.Unmarshal(body, &r); err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+	if r.Success != 1 || r.UserWallet == nil {
+		return nil, ErrWalletBalanceUnavailable
+	}
+	amount, err := strconv.Atoi(strings.TrimSpace(r.UserWallet.Amount))
+	if err != nil {
+		return nil, fmt.Errorf("parse wallet amount %q: %w", r.UserWallet.Amount, err)
+	}
+	// user_wallet.currency is the wallet's own currency; the top-level
+	// `currency` is the storefront's, which can differ while travelling.
+	code := r.UserWallet.Currency
+	if code == "" {
+		code = r.Currency
+	}
+	return &WalletBalance{
+		Balance:      amount,
+		CurrencyCode: code,
+		Currency:     walletCurrencyIDs[strings.ToUpper(code)],
+		CountryCode:  r.CountryCode,
+	}, nil
 }
 
 // fetchBrowserPage GETs pageURL with a common-browser User-Agent and

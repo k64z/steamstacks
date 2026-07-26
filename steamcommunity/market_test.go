@@ -128,6 +128,98 @@ func TestGetMyMarketListingIDs(t *testing.T) {
 	}
 }
 
+// TestGetWalletBalance: the balance comes from the store's add-funds JSON,
+// on store.steampowered.com — a different rate-limit bucket from the market.
+func TestGetWalletBalance(t *testing.T) {
+	var gotHost, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHost, gotPath = r.Host, r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":1,"currency":"RUB","country_code":"RU",` +
+			`"amounts":[15000,30000],"user_wallet":{"amount":"5051","currency":"RUB"}}`))
+	}))
+	defer srv.Close()
+
+	c := newTestCommunity(t, srv.URL)
+	c.httpClient.Transport = rewriteHostTransport(srv)
+
+	bal, err := c.GetWalletBalance(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotHost != "store.steampowered.com" {
+		t.Errorf("host = %q, want store.steampowered.com", gotHost)
+	}
+	if gotPath != "/api/getfundwalletinfo" {
+		t.Errorf("path = %q, want /api/getfundwalletinfo", gotPath)
+	}
+	if bal.Balance != 5051 {
+		t.Errorf("Balance = %d, want 5051", bal.Balance)
+	}
+	if bal.CurrencyCode != "RUB" || bal.Currency != 5 {
+		t.Errorf("currency = %q/%d, want RUB/5", bal.CurrencyCode, bal.Currency)
+	}
+	if bal.CountryCode != "RU" {
+		t.Errorf("CountryCode = %q, want RU", bal.CountryCode)
+	}
+}
+
+func TestParseWalletBalance(t *testing.T) {
+	cases := []struct {
+		name     string
+		body     string
+		wantErr  error
+		wantBal  int
+		wantCurr int
+	}{
+		{
+			name:     "wallet currency wins over storefront currency",
+			body:     `{"success":1,"currency":"USD","user_wallet":{"amount":"120","currency":"KZT"}}`,
+			wantBal:  120,
+			wantCurr: 37,
+		},
+		{
+			// A code outside walletCurrencyIDs must resolve to 0 —
+			// "unverified" — never a guessed id, which would mislabel
+			// real money in the dashboard.
+			name:     "unknown ISO code yields currency 0, not a guess",
+			body:     `{"success":1,"user_wallet":{"amount":"7","currency":"XYZ"}}`,
+			wantBal:  7,
+			wantCurr: 0,
+		},
+		{
+			name:    "logged out: no user_wallet",
+			body:    `{"success":1,"currency":"USD","amounts":[500]}`,
+			wantErr: ErrWalletBalanceUnavailable,
+		},
+		{
+			name:    "success=0",
+			body:    `{"success":0,"user_wallet":{"amount":"5","currency":"USD"}}`,
+			wantErr: ErrWalletBalanceUnavailable,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseWalletBalance([]byte(tc.body))
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Balance != tc.wantBal {
+				t.Errorf("Balance = %d, want %d", got.Balance, tc.wantBal)
+			}
+			if got.Currency != tc.wantCurr {
+				t.Errorf("Currency = %d, want %d", got.Currency, tc.wantCurr)
+			}
+		})
+	}
+}
+
 func TestGetMyPendingMarketListings(t *testing.T) {
 	// Fixture shape mirrors Steam's /market/ page: one pending row
 	// (cancel-button href calls CancelMarketListingConfirmation) plus
