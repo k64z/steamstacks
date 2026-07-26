@@ -106,7 +106,7 @@ func (c *Client) RemoveFriend(ctx context.Context, target steamid.SteamID) error
 func (c *Client) IgnoreFriend(ctx context.Context, target steamid.SteamID, ignore bool) error {
 	responseCh := c.expectEMsg(EMsgClientSetIgnoreFriendResponse)
 
-	body := encodeIgnoreFriendBody(c.steamID, target, ignore)
+	body := encodeIgnoreFriendBody(c.SteamID(), target, ignore)
 
 	if err := c.sendNonProtoPacket(ctx, EMsgClientSetIgnoreFriend, body); err != nil {
 		return fmt.Errorf("send SetIgnoreFriend: %w", err)
@@ -156,7 +156,12 @@ func (c *Client) sendNonProtoPacket(ctx context.Context, emsg EMsg, body []byte)
 	c.mu.Lock()
 	sid := c.steamID.ToSteamID64()
 	sessionID := c.sessionID
+	conn := c.conn
 	c.mu.Unlock()
+
+	if conn == nil {
+		return ErrDisconnected
+	}
 
 	pkt := &Packet{
 		EMsg:    emsg,
@@ -173,7 +178,7 @@ func (c *Client) sendNonProtoPacket(ctx context.Context, emsg EMsg, body []byte)
 		return fmt.Errorf("encode %s: %w", emsg, err)
 	}
 
-	return c.conn.Write(ctx, data)
+	return conn.Write(ctx, data)
 }
 
 // DecodeFriendsList unmarshals a CMsgClientFriendsList from an EMsgClientFriendsList packet.

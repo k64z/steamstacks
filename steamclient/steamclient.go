@@ -34,6 +34,10 @@ type Client struct {
 	httpClient *http.Client
 	logger     *slog.Logger
 
+	// The On* callback fields below are read from the connection's
+	// goroutines without locking. Set them via options or before Connect
+	// and do not mutate them while connected.
+
 	// OnPacket is called for every decoded packet not handled internally.
 	OnPacket func(*Packet)
 
@@ -64,13 +68,13 @@ type Client struct {
 	nextJobID   atomic.Uint64
 	pendingJobs map[uint64]chan<- *Packet // protected by mu
 
-	mu             sync.Mutex
-	done           chan struct{} // closed on Disconnect
-	wg             sync.WaitGroup
-	loggedIn       bool
-	walletInfo     *WalletInfo // last CM wallet push; nil until one arrives
-	closeOnce      sync.Once
-	disconnectOnce sync.Once
+	mu              sync.Mutex
+	done            chan struct{} // per-connection; closed on Disconnect
+	doneClosed      bool          // whether done has been closed this cycle
+	disconnectFired bool          // whether OnDisconnect fired this cycle
+	wg              sync.WaitGroup
+	loggedIn        bool
+	walletInfo      *WalletInfo // last CM wallet push; nil until one arrives
 }
 
 type config struct {
@@ -156,7 +160,29 @@ func New(opts ...Option) *Client {
 // SetConn sets the underlying connection. This is useful for testing with
 // mock connections from external packages.
 func (c *Client) SetConn(conn Connection) {
+	c.mu.Lock()
 	c.conn = conn
+	c.mu.Unlock()
+}
+
+// closeDone closes the per-connection done channel exactly once per cycle.
+func (c *Client) closeDone() {
+	c.mu.Lock()
+	if c.done != nil && !c.doneClosed {
+		close(c.done)
+		c.doneClosed = true
+	}
+	c.mu.Unlock()
+}
+
+// closeConn closes the transport if one is present.
+func (c *Client) closeConn() {
+	c.mu.Lock()
+	conn := c.conn
+	c.mu.Unlock()
+	if conn != nil {
+		conn.Close()
+	}
 }
 
 // Connect discovers CM servers, dials one, and prepares the connection.
@@ -186,13 +212,14 @@ func (c *Client) Connect(ctx context.Context) error {
 	server := candidates[rand.IntN(len(candidates))]
 	c.logger.Info("connecting to CM server", "addr", server.Addr, "type", server.Type)
 
+	var conn Connection
 	switch c.transport {
 	case TransportWebSocket:
 		ws, err := dialWebSocket(ctx, server.Addr)
 		if err != nil {
 			return err
 		}
-		c.conn = ws
+		conn = ws
 
 	case TransportTCP:
 		tcp, err := dialTCP(ctx, server.Addr)
@@ -203,14 +230,21 @@ func (c *Client) Connect(ctx context.Context) error {
 			tcp.Close()
 			return fmt.Errorf("encryption handshake: %w", err)
 		}
-		c.conn = tcp
+		conn = tcp
 	}
 
-	c.done = make(chan struct{})
-	c.wg.Add(1)
-	go c.readLoop()
+	done := make(chan struct{})
+	c.mu.Lock()
+	c.conn = conn
+	c.done = done
+	c.doneClosed = false
+	c.disconnectFired = false
+	c.mu.Unlock()
 
-	c.logger.Info("connected", "addr", c.conn.RemoteAddr())
+	c.wg.Add(1)
+	go c.readLoop(conn, done)
+
+	c.logger.Info("connected", "addr", conn.RemoteAddr())
 	return nil
 }
 
@@ -274,10 +308,14 @@ func (c *Client) Login(ctx context.Context, accountName, refreshToken string, si
 		return fmt.Errorf("logon failed: eresult=%d", resp.GetEresult())
 	}
 
+	assignedSID := steamid.FromSteamID64(pkt.Header.GetSteamid())
+	sessionID := pkt.Header.GetClientSessionid()
+
 	c.mu.Lock()
-	c.steamID = steamid.FromSteamID64(pkt.Header.GetSteamid())
-	c.sessionID = pkt.Header.GetClientSessionid()
+	c.steamID = assignedSID
+	c.sessionID = sessionID
 	c.loggedIn = true
+	done := c.done
 	c.mu.Unlock()
 
 	heartbeatSec := resp.GetHeartbeatSeconds()
@@ -286,11 +324,11 @@ func (c *Client) Login(ctx context.Context, accountName, refreshToken string, si
 	}
 
 	c.wg.Add(1)
-	go c.heartbeatLoop(time.Duration(heartbeatSec) * time.Second)
+	go c.heartbeatLoop(time.Duration(heartbeatSec)*time.Second, done)
 
 	c.logger.Info("logged in",
-		"steamid", c.steamID.String(),
-		"session_id", c.sessionID,
+		"steamid", assignedSID.String(),
+		"session_id", sessionID,
 		"heartbeat_sec", heartbeatSec,
 	)
 
@@ -299,6 +337,8 @@ func (c *Client) Login(ctx context.Context, accountName, refreshToken string, si
 
 // SteamID returns the SteamID assigned to this client after login.
 func (c *Client) SteamID() steamid.SteamID {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.steamID
 }
 
@@ -326,16 +366,9 @@ func (c *Client) Disconnect() error {
 		}, body)
 	}
 
-	c.closeOnce.Do(func() { close(c.done) })
-
-	if c.conn != nil {
-		c.conn.Close()
-	}
+	c.closeDone()
+	c.closeConn()
 	c.wg.Wait()
-
-	// Reset sync primitives for potential reuse via Reconnect.
-	c.closeOnce = sync.Once{}
-	c.disconnectOnce = sync.Once{}
 
 	c.logger.Info("disconnected")
 	return nil
@@ -352,7 +385,12 @@ func (c *Client) sendPacket(ctx context.Context, emsg EMsg, hdr *protocol.CMsgPr
 		hdr.Steamid = &sid
 		hdr.ClientSessionid = &c.sessionID
 	}
+	conn := c.conn
 	c.mu.Unlock()
+
+	if conn == nil {
+		return ErrDisconnected
+	}
 
 	pkt := &Packet{
 		EMsg:    emsg,
@@ -366,17 +404,17 @@ func (c *Client) sendPacket(ctx context.Context, emsg EMsg, hdr *protocol.CMsgPr
 		return fmt.Errorf("encode %s: %w", emsg, err)
 	}
 
-	return c.conn.Write(ctx, data)
+	return conn.Write(ctx, data)
 }
 
-func (c *Client) readLoop() {
+func (c *Client) readLoop(conn Connection, done <-chan struct{}) {
 	defer c.wg.Done()
 
 	for {
-		data, err := c.conn.Read(context.Background())
+		data, err := conn.Read(context.Background())
 		if err != nil {
 			select {
-			case <-c.done:
+			case <-done:
 				return // expected disconnect
 			default:
 				if !errors.Is(err, context.Canceled) {
@@ -444,10 +482,8 @@ func (c *Client) handlePacket(pkt *Packet) {
 		c.logger.Warn("logged off by server", "eresult", eresult)
 		c.fireDisconnect(&DisconnectEvent{ServerInitiated: true, EResult: eresult})
 		// Close connection — readLoop will exit cleanly on next Read().
-		c.closeOnce.Do(func() { close(c.done) })
-		if c.conn != nil {
-			c.conn.Close()
-		}
+		c.closeDone()
+		c.closeConn()
 
 	case EMsgClientFriendsList:
 		c.handleFriendsList(pkt)
@@ -502,12 +538,16 @@ func (c *Client) expectEMsg(target EMsg) <-chan *Packet {
 
 // awaitPacket blocks until a packet arrives on ch, ctx expires, or the connection closes.
 func (c *Client) awaitPacket(ctx context.Context, ch <-chan *Packet) (*Packet, error) {
+	c.mu.Lock()
+	done := c.done
+	c.mu.Unlock()
+
 	select {
 	case pkt := <-ch:
 		return pkt, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	case <-c.done:
+	case <-done:
 		return nil, ErrDisconnected
 	}
 }
@@ -555,7 +595,7 @@ func (c *Client) callServiceMethod(ctx context.Context, method string, body []by
 	return pkt, nil
 }
 
-func (c *Client) heartbeatLoop(interval time.Duration) {
+func (c *Client) heartbeatLoop(interval time.Duration, done <-chan struct{}) {
 	defer c.wg.Done()
 
 	ticker := time.NewTicker(interval)
@@ -563,15 +603,13 @@ func (c *Client) heartbeatLoop(interval time.Duration) {
 
 	for {
 		select {
-		case <-c.done:
+		case <-done:
 			return
 		case <-ticker.C:
 			body, _ := proto.Marshal(&protocol.CMsgClientHeartBeat{})
 			if err := c.sendPacket(context.Background(), EMsgClientHeartBeat, nil, body); err != nil {
 				c.logger.Error("heartbeat failed, closing connection", "err", err)
-				if c.conn != nil {
-					c.conn.Close()
-				}
+				c.closeConn()
 				return
 			}
 			c.logger.Debug("heartbeat sent")

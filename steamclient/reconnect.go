@@ -3,10 +3,11 @@ package steamclient
 import (
 	"context"
 	"errors"
-	"sync"
 )
 
-// ErrDisconnected is returned by awaitPacket when the connection is closed.
+// ErrDisconnected is returned when the connection is closed or was never
+// established: by awaitPacket while waiting for a response, and by sends
+// attempted before Connect.
 var ErrDisconnected = errors.New("steamclient: disconnected")
 
 // DisconnectEvent describes why the client disconnected.
@@ -27,45 +28,41 @@ func WithDisconnectHandler(fn func(*DisconnectEvent)) Option {
 // fireDisconnect invokes the OnDisconnect callback at most once per connection lifecycle.
 // The callback runs in a new goroutine so the caller can safely call Reconnect.
 func (c *Client) fireDisconnect(evt *DisconnectEvent) {
-	c.disconnectOnce.Do(func() {
-		c.mu.Lock()
-		c.loggedIn = false
-		// The wallet cache is session-scoped: a caller that sees
-		// WalletInfo ok=true must be able to read it as "the CM told me
-		// this during the session I have now", not a figure left over
-		// from a connection that has since dropped. Steam re-pushes on
-		// logon, so the gap is brief.
-		c.walletInfo = nil
+	c.mu.Lock()
+	if c.disconnectFired {
 		c.mu.Unlock()
-		if c.OnDisconnect != nil {
-			go c.OnDisconnect(evt)
-		}
-	})
+		return
+	}
+	c.disconnectFired = true
+	c.loggedIn = false
+	// The wallet cache is session-scoped: a caller that sees
+	// WalletInfo ok=true must be able to read it as "the CM told me
+	// this during the session I have now", not a figure left over
+	// from a connection that has since dropped. Steam re-pushes on
+	// logon, so the gap is brief.
+	c.walletInfo = nil
+	c.mu.Unlock()
+
+	if c.OnDisconnect != nil {
+		go c.OnDisconnect(evt)
+	}
 }
 
 // Reconnect tears down the existing connection and establishes a new one.
 // After Reconnect returns successfully the caller should call Login again.
 func (c *Client) Reconnect(ctx context.Context) error {
-	// Signal goroutines to stop (safe if already closed).
-	c.closeOnce.Do(func() { close(c.done) })
-
-	// Close transport to unblock pending I/O.
-	if c.conn != nil {
-		c.conn.Close()
-	}
+	// Signal goroutines to stop and unblock pending I/O.
+	c.closeDone()
+	c.closeConn()
 
 	// Wait for readLoop + heartbeatLoop to finish.
 	c.wg.Wait()
 
-	// Reset sync primitives for new connection cycle.
-	c.closeOnce = sync.Once{}
-	c.disconnectOnce = sync.Once{}
-	c.done = make(chan struct{})
 	c.mu.Lock()
 	c.loggedIn = false
 	c.walletInfo = nil
 	c.mu.Unlock()
 
-	// Establish new connection (overwrites c.done, starts new readLoop).
+	// Connect installs a fresh done channel, readLoop, and per-cycle flags.
 	return c.Connect(ctx)
 }
