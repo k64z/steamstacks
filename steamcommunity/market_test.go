@@ -105,14 +105,26 @@ func TestSellMarketItemTypedErrors(t *testing.T) {
 	}
 }
 
+// TestGetMyMarketListingIDs: IDs come from the /mylistings/render/ JSON
+// endpoint, NOT the /market/ home page — the whole point of the switch is
+// to stop a delist walk from hammering the rate-limited home page. The
+// handler 404s anything else, so a regression back to /market/ fails here.
 func TestGetMyMarketListingIDs(t *testing.T) {
+	var gotPath, gotCount string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(`<html>
-<div class="market_recent_listing_row listing_1000000000001"><span>item A</span></div>
-<div class="market_recent_listing_row listing_1000000000002"><span>item B</span></div>
-<div class="market_recent_listing_row listing_1000000000001"><span>dup</span></div>
-</html>`))
+		gotPath = r.URL.Path
+		if r.URL.Path != "/market/mylistings/render/" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		gotCount = r.URL.Query().Get("count")
+		resultsHTML := jsonQuote(strings.Join([]string{
+			sampleListingRow("1000000000001", "item A", "$0.08 USD", "$0.06 USD", "18 Apr", "999001"),
+			sampleListingRow("1000000000002", "item B", "$0.09 USD", "$0.07 USD", "18 Apr", "999002"),
+		}, ""))
+		body := `{"success":true,"pagesize":2,"total_count":2,"results_html":` + resultsHTML + `}`
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
 	}))
 	defer srv.Close()
 
@@ -122,6 +134,12 @@ func TestGetMyMarketListingIDs(t *testing.T) {
 	ids, err := c.GetMyMarketListingIDs(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/market/mylistings/render/" {
+		t.Errorf("fetched %q, want the render endpoint", gotPath)
+	}
+	if gotCount != "100" {
+		t.Errorf("count = %q, want 100 (home page only yielded ~10)", gotCount)
 	}
 	if len(ids) != 2 || ids[0] != "1000000000001" || ids[1] != "1000000000002" {
 		t.Errorf("unexpected ids: %v", ids)

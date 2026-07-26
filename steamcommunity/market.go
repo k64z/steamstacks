@@ -158,9 +158,11 @@ func (c *Community) SellMarketItem(ctx context.Context, appID int, contextID uin
 	return out, fmt.Errorf("market sell failed: %s", out.Message)
 }
 
-// listingIDRE matches numeric listing IDs embedded in the market HTML
-// (the row class is `market_recent_listing_row listing_<id>`).
-var listingIDRE = regexp.MustCompile(`market_recent_listing_row listing_(\d+)`)
+// marketListingsPageSize is the page size GetMyMarketListingIDs asks the
+// render endpoint for — Steam's documented maximum. The /market/ home page
+// this replaced yielded ~10 per load, so a full delist walk now costs an
+// order of magnitude fewer requests.
+const marketListingsPageSize = 100
 
 // pendingListingRE matches only rows in Steam's "Listings awaiting
 // confirmation" section. Active-listing rows render RemoveMarketListing(...)
@@ -180,42 +182,34 @@ type PendingListing struct {
 	AssetID   string
 }
 
-// GetMyMarketListingIDs scrapes listing IDs from the authenticated
-// user's market home page. Steam does not expose a JSON endpoint for
-// this, so we parse the HTML — fragile but tracks Fhub's long-running
-// approach. Returns deduplicated listing IDs in document order.
+// GetMyMarketListingIDs returns the first page of the authenticated user's
+// active market listing IDs, deduplicated, in document order.
+//
+// It reads the /mylistings/render/ JSON endpoint (via GetMarketListings),
+// NOT the /market/ home page. The home page renders only ~10 listings per
+// load and is the most rate-limited route on steamcommunity.com, so callers
+// that paginate by "cancel this page, re-fetch, repeat" issued one heavyweight
+// request per 10 listings and reliably 429'd the IP — which then broke
+// unrelated fetches, GetWalletFeeInfo above most visibly. The render endpoint
+// serves 100 per page and is far cheaper.
+//
+// Callers that cancel what they get and loop must re-call this: Steam
+// re-pages after each cancellation, and the endpoint has read-your-write lag,
+// so a returned ID may already be gone.
 func (c *Community) GetMyMarketListingIDs(ctx context.Context) ([]string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"https://steamcommunity.com/market/", nil)
+	page, err := c.GetMarketListings(ctx, 0, marketListingsPageSize)
 	if err != nil {
-		return nil, fmt.Errorf("new request: %w", err)
+		return nil, err
 	}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("do: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-
-	matches := listingIDRE.FindAllStringSubmatch(string(body), -1)
-	seen := make(map[string]bool, len(matches))
-	ids := make([]string, 0, len(matches))
-	for _, m := range matches {
-		if len(m) < 2 {
+	seen := make(map[string]bool, len(page.Listings))
+	ids := make([]string, 0, len(page.Listings))
+	for _, l := range page.Listings {
+		if l.ID == "" || seen[l.ID] {
 			continue
 		}
-		if !seen[m[1]] {
-			seen[m[1]] = true
-			ids = append(ids, m[1])
-		}
+		seen[l.ID] = true
+		ids = append(ids, l.ID)
 	}
 	return ids, nil
 }
