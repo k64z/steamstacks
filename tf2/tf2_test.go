@@ -13,11 +13,6 @@ import (
 )
 
 func TestWelcomeStopsHelloAndSetsConnected(t *testing.T) {
-	// Use a fake ticker that never fires so helloLoop stays quiet.
-	origTicker := newTicker
-	newTicker = func(d time.Duration) ticker { return &fakeTicker{ch: make(chan time.Time)} }
-	defer func() { newTicker = origTicker }()
-
 	mc := &mockConn{writeCh: make(chan []byte, 10)}
 	cm := steamclient.New()
 	cm.SetConn(mc)
@@ -28,6 +23,7 @@ func TestWelcomeStopsHelloAndSetsConnected(t *testing.T) {
 		connected = true
 		gotEvent = e
 	}))
+	quietTicker(tc)
 
 	if err := tc.Connect(context.Background()); err != nil {
 		t.Fatalf("Connect: %v", err)
@@ -71,14 +67,11 @@ func TestGoodbyeSetsDisconnected(t *testing.T) {
 	cm := steamclient.New()
 	cm.SetConn(mc)
 
-	origTicker := newTicker
-	newTicker = func(d time.Duration) ticker { return &fakeTicker{ch: make(chan time.Time)} }
-	defer func() { newTicker = origTicker }()
-
 	var disconnected bool
 	tc := New(cm, WithDisconnectedHandler(func(e *GoodbyeEvent) {
 		disconnected = true
 	}))
+	quietTicker(tc)
 
 	if err := tc.Connect(context.Background()); err != nil {
 		t.Fatalf("Connect: %v", err)
@@ -112,11 +105,8 @@ func TestDisconnectStopsHelloLoop(t *testing.T) {
 	cm := steamclient.New()
 	cm.SetConn(mc)
 
-	origTicker := newTicker
-	newTicker = func(d time.Duration) ticker { return &fakeTicker{ch: make(chan time.Time)} }
-	defer func() { newTicker = origTicker }()
-
 	tc := New(cm)
+	quietTicker(tc)
 
 	if err := tc.Connect(context.Background()); err != nil {
 		t.Fatalf("Connect: %v", err)
@@ -178,11 +168,8 @@ func TestHelloLoopSendsMessages(t *testing.T) {
 	cm.SetConn(mc)
 
 	fakeCh := make(chan time.Time, 5)
-	origTicker := newTicker
-	newTicker = func(d time.Duration) ticker { return &fakeTicker{ch: fakeCh} }
-	defer func() { newTicker = origTicker }()
-
 	tc := New(cm)
+	tc.newTicker = func(d time.Duration) ticker { return &fakeTicker{ch: fakeCh} }
 
 	if err := tc.Connect(context.Background()); err != nil {
 		t.Fatalf("Connect: %v", err)
@@ -210,11 +197,8 @@ func TestConnectWhileConnecting(t *testing.T) {
 	cm := steamclient.New()
 	cm.SetConn(mc)
 
-	origTicker := newTicker
-	newTicker = func(d time.Duration) ticker { return &fakeTicker{ch: make(chan time.Time)} }
-	defer func() { newTicker = origTicker }()
-
 	tc := New(cm)
+	quietTicker(tc)
 
 	if err := tc.Connect(context.Background()); err != nil {
 		t.Fatalf("first Connect: %v", err)
@@ -559,4 +543,9 @@ type fakeTicker struct {
 }
 
 func (f *fakeTicker) C() <-chan time.Time { return f.ch }
-func (f *fakeTicker) Stop()              {}
+func (f *fakeTicker) Stop()               {}
+
+// quietTicker installs a ticker that never fires so helloLoop stays quiet.
+func quietTicker(tc *Client) {
+	tc.newTicker = func(d time.Duration) ticker { return &fakeTicker{ch: make(chan time.Time)} }
+}

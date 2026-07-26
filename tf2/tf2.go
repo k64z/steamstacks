@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/k64z/steamstacks/steamclient"
 	"google.golang.org/protobuf/encoding/protowire"
@@ -63,7 +64,11 @@ type Client struct {
 	mu        sync.Mutex
 	connected bool
 	helloStop chan struct{}
+	helloWG   sync.WaitGroup
 	cache     *soCache
+
+	// newTicker constructs the hello-resend ticker; swapped in tests.
+	newTicker func(time.Duration) ticker
 }
 
 type config struct {
@@ -163,6 +168,7 @@ func New(cm *steamclient.Client, opts ...Option) *Client {
 		OnAccountUpdate:  cfg.onAccountUpdate,
 		OnCraftCompleted: cfg.onCraftCompleted,
 		cache:            newSOCache(),
+		newTicker:        defaultNewTicker,
 	}
 
 	prev := cm.OnGCMessage
@@ -180,7 +186,9 @@ func New(cm *steamclient.Client, opts ...Option) *Client {
 }
 
 // Connect starts the TF2 GC session by sending CMsgClientHello in a loop
-// until the GC responds with CMsgClientWelcome.
+// until the GC responds with CMsgClientWelcome. ctx governs the whole
+// connecting phase, including the background hello resends: cancelling it
+// aborts the attempt.
 func (c *Client) Connect(ctx context.Context) error {
 	c.mu.Lock()
 	if c.helloStop != nil {
@@ -194,16 +202,21 @@ func (c *Client) Connect(ctx context.Context) error {
 }
 
 // Disconnect stops the hello loop and marks the session as disconnected.
+// It does not return until the hello loop has exited, so no hello can be
+// sent after Disconnect returns.
 func (c *Client) Disconnect() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	c.connected = false
 	c.cache.reset()
 	if c.helloStop != nil {
 		close(c.helloStop)
 		c.helloStop = nil
 	}
+	c.mu.Unlock()
+
+	// Wait outside the lock: the loop's send may be in flight and must not
+	// be able to deadlock against a handler that takes c.mu.
+	c.helloWG.Wait()
 }
 
 // IsConnected reports whether the TF2 GC session is active.
@@ -461,22 +474,29 @@ func (c *Client) sendHello(ctx context.Context) error {
 	stop := c.helloStop
 	c.mu.Unlock()
 
-	// Start background hello loop — resends every 5 seconds until welcome or stop.
-	go c.helloLoop(stop, body)
+	// Start background hello loop — resends every 5 seconds until welcome,
+	// stop, or ctx cancellation. Joined via helloWG in Disconnect.
+	c.helloWG.Add(1)
+	go func() {
+		defer c.helloWG.Done()
+		c.helloLoop(ctx, stop, body)
+	}()
 
 	return nil
 }
 
-func (c *Client) helloLoop(stop <-chan struct{}, helloBody []byte) {
-	ticker := newTicker(helloInterval)
+func (c *Client) helloLoop(ctx context.Context, stop <-chan struct{}, helloBody []byte) {
+	ticker := c.newTicker(helloInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-stop:
 			return
+		case <-ctx.Done():
+			return
 		case <-ticker.C():
-			if err := c.cm.SendGCMessage(context.Background(), AppID, MsgClientHello, true, helloBody); err != nil {
+			if err := c.cm.SendGCMessage(ctx, AppID, MsgClientHello, true, helloBody); err != nil {
 				c.logger.Error("tf2: resend hello failed", "err", err)
 				return
 			}

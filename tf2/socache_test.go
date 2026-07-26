@@ -3,7 +3,6 @@ package tf2
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/k64z/steamstacks/steamclient"
 	"google.golang.org/protobuf/encoding/protowire"
@@ -381,11 +380,8 @@ func TestSOUpdateMultiple(t *testing.T) {
 }
 
 func TestCacheResetOnWelcome(t *testing.T) {
-	origTicker := newTicker
-	newTicker = func(d time.Duration) ticker { return &fakeTicker{ch: make(chan time.Time)} }
-	defer func() { newTicker = origTicker }()
-
 	tc, cm, mc := setupTestClient()
+	quietTicker(tc)
 
 	if err := tc.Connect(context.Background()); err != nil {
 		t.Fatalf("Connect: %v", err)
@@ -459,16 +455,13 @@ func TestCacheResetOnGoodbye(t *testing.T) {
 }
 
 func TestWelcomeEventParsed(t *testing.T) {
-	origTicker := newTicker
-	newTicker = func(d time.Duration) ticker { return &fakeTicker{ch: make(chan time.Time)} }
-	defer func() { newTicker = origTicker }()
-
 	var ev *WelcomeEvent
 	tc, cm, mc := setupTestClient(
 		WithConnectedHandler(func(e *WelcomeEvent) {
 			ev = e
 		}),
 	)
+	quietTicker(tc)
 
 	if err := tc.Connect(context.Background()); err != nil {
 		t.Fatalf("Connect: %v", err)
