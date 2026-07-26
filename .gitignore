@@ -1,4 +1,3 @@
 main.go
 cmd/
-examples/
 steam_session*.json
