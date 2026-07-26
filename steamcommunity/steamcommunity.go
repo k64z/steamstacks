@@ -14,9 +14,9 @@ import (
 type Community struct {
 	httpClient *http.Client
 	// initMu guards lazy initialisation of sessionID + SteamID. Callers
-	// that fan parallel goroutines into the same *Community (e.g.
-	// fh-backend's friends module hitting three /friends/* pages
-	// concurrently) would otherwise race on the first ensureInit.
+	// that fan parallel goroutines into the same *Community (e.g. a
+	// friends sync hitting the three /friends/* pages concurrently)
+	// would otherwise race on the first ensureInit.
 	initMu    sync.Mutex
 	sessionID string
 	SteamID   steamid.SteamID

@@ -138,9 +138,14 @@ func parseInventoryResponse(data []byte) (items []InventoryItem, hasMore bool, l
 	return items, resp.MoreItems == 1, resp.LastAssetID, nil
 }
 
+// Sentinel errors returned by GetInventory, matchable with errors.Is.
 var (
-	errInventoryPrivate = errors.New("inventory is private")
-	errRateLimited      = errors.New("rate limited")
+	// ErrInventoryPrivate is returned when the target inventory is not
+	// visible to the authenticated account (HTTP 403).
+	ErrInventoryPrivate = errors.New("steamcommunity: inventory is private")
+	// ErrRateLimited is returned when Steam throttles the inventory
+	// endpoint (HTTP 429); back off before retrying.
+	ErrRateLimited = errors.New("steamcommunity: rate limited")
 )
 
 func (c *Community) GetInventory(ctx context.Context, steamID steamid.SteamID, appID int, contextID string) ([]InventoryItem, error) {
@@ -180,9 +185,9 @@ func (c *Community) GetInventory(ctx context.Context, steamID steamid.SteamID, a
 		case http.StatusOK:
 			// continue processing below
 		case http.StatusForbidden:
-			return nil, errInventoryPrivate
+			return nil, ErrInventoryPrivate
 		case http.StatusTooManyRequests:
-			return nil, errRateLimited
+			return nil, ErrRateLimited
 		default:
 			return nil, steamapi.HTTPStatusError(resp.StatusCode, body)
 		}

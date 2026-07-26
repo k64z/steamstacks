@@ -42,12 +42,12 @@ type MarketSellResult struct {
 // Market-side error taxonomy. Callers typically log-and-continue on
 // these rather than aborting the whole cycle.
 var (
-	ErrMarketItemServerDown        = errors.New("market: game's item server may be down")
-	ErrMarketPendingConfirmation   = errors.New("market: listing pending confirmation for this item")
-	ErrMarketItemNotInInventory    = errors.New("market: item no longer in inventory")
-	ErrMarketListingProblem        = errors.New("market: generic listing problem; retry")
-	ErrMarketWalletTooMuchMoney    = errors.New("market: wallet holds too much money")
-	ErrMarketPreviousActionPending = errors.New("market: previous action still pending")
+	ErrMarketItemServerDown        = errors.New("steamcommunity: game's item server may be down")
+	ErrMarketPendingConfirmation   = errors.New("steamcommunity: listing pending confirmation for this item")
+	ErrMarketItemNotInInventory    = errors.New("steamcommunity: item no longer in inventory")
+	ErrMarketListingProblem        = errors.New("steamcommunity: generic listing problem; retry")
+	ErrMarketWalletTooMuchMoney    = errors.New("steamcommunity: wallet holds too much money")
+	ErrMarketPreviousActionPending = errors.New("steamcommunity: previous action still pending")
 )
 
 // GetMarketPriceOverview fetches the market-wide price overview for a
@@ -606,7 +606,7 @@ type WalletFeeInfo struct {
 // ErrWalletFeeInfoUnavailable is returned when the /market/ page carries no
 // g_rgWalletInfo block — e.g. a logged-out session, or Steam served the
 // stripped React page (the latter is why this fetch sends a browser UA).
-var ErrWalletFeeInfoUnavailable = errors.New("market: g_rgWalletInfo not present on market page")
+var ErrWalletFeeInfoUnavailable = errors.New("steamcommunity: g_rgWalletInfo not present on market page")
 
 var (
 	walletFeeMinimumRE = regexp.MustCompile(`"wallet_fee_minimum":\s*"?([0-9]+)"?`)
@@ -660,7 +660,7 @@ type WalletBalance struct {
 // ErrWalletBalanceUnavailable is returned when getfundwalletinfo answers
 // without a user_wallet block — a logged-out session, or an account with no
 // wallet in this region.
-var ErrWalletBalanceUnavailable = errors.New("market: user_wallet not present in getfundwalletinfo response")
+var ErrWalletBalanceUnavailable = errors.New("steamcommunity: user_wallet not present in getfundwalletinfo response")
 
 // fundWalletInfoResponse mirrors the JSON shape of
 // store.steampowered.com/api/getfundwalletinfo. Only the fields we use are
@@ -792,28 +792,51 @@ func parseWalletFeeInfo(body []byte) (*WalletFeeInfo, error) {
 	if len(m) != 2 {
 		return nil, ErrWalletFeeInfoUnavailable
 	}
+
+	// A field whose regex matched but whose value fails to parse means a
+	// malformed g_rgWalletInfo block; fail rather than silently returning
+	// zero-valued money fields.
+	var perr error
+	atoi := func(name, v string) int {
+		n, err := strconv.Atoi(v)
+		if err != nil && perr == nil {
+			perr = fmt.Errorf("parse %s %q: %w", name, v, err)
+		}
+		return n
+	}
+	atof := func(name, v string) float64 {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil && perr == nil {
+			perr = fmt.Errorf("parse %s %q: %w", name, v, err)
+		}
+		return f
+	}
+
 	out := &WalletFeeInfo{}
-	out.FeeMinimum, _ = strconv.Atoi(m[1])
+	out.FeeMinimum = atoi("fee minimum", m[1])
 	if g := walletFeeBaseRE.FindStringSubmatch(s); len(g) == 2 {
-		out.FeeBase, _ = strconv.Atoi(g[1])
+		out.FeeBase = atoi("fee base", g[1])
 	}
 	if g := walletCurrencyRE.FindStringSubmatch(s); len(g) == 2 {
-		out.Currency, _ = strconv.Atoi(g[1])
+		out.Currency = atoi("wallet currency", g[1])
 	}
 	if g := walletIncrementRE.FindStringSubmatch(s); len(g) == 2 {
-		out.CurrencyIncrement, _ = strconv.Atoi(g[1])
+		out.CurrencyIncrement = atoi("currency increment", g[1])
 	}
 	if g := walletFeePercentRE.FindStringSubmatch(s); len(g) == 2 {
-		out.FeePercent, _ = strconv.ParseFloat(g[1], 64)
+		out.FeePercent = atof("fee percent", g[1])
 	}
 	if g := walletPubFeeRE.FindStringSubmatch(s); len(g) == 2 {
-		out.PublisherFeePercentDefault, _ = strconv.ParseFloat(g[1], 64)
+		out.PublisherFeePercentDefault = atof("publisher fee percent", g[1])
 	}
 	if g := walletBalanceRE.FindStringSubmatch(s); len(g) == 2 {
-		out.Balance, _ = strconv.Atoi(g[1])
+		out.Balance = atoi("wallet balance", g[1])
 	}
 	if g := walletMaxBalanceRE.FindStringSubmatch(s); len(g) == 2 {
-		out.MaxBalance, _ = strconv.Atoi(g[1])
+		out.MaxBalance = atoi("max balance", g[1])
+	}
+	if perr != nil {
+		return nil, perr
 	}
 	return out, nil
 }
@@ -886,7 +909,7 @@ type MarketOrderLevel struct {
 func (c *Community) GetMarketItemPageData(ctx context.Context, appID int, marketHashName string) (*MarketItemPageData, error) {
 	ob, err := c.fetchOrderbookQueryAction(ctx, appID, marketHashName)
 	if err != nil {
-		return nil, fmt.Errorf("market: fetch orderbook: %w", err)
+		return nil, fmt.Errorf("fetch orderbook: %w", err)
 	}
 	out := &MarketItemPageData{}
 	out.applyOrderbook(ob)
