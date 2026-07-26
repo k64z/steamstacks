@@ -32,6 +32,7 @@ const (
 	EMsgClientRequestItemAnnouncements EMsg = 5577
 	EMsgClientFriendMsgEchoToSender    EMsg = 5578
 	EMsgClientPersonaChangeResponse    EMsg = 5584
+	EMsgClientWalletInfoUpdate         EMsg = 5528
 	EMsgClientUserNotifications        EMsg = 5599
 	EMsgClientToGC                     EMsg = 5452
 	EMsgClientFromGC                   EMsg = 5453
@@ -70,6 +71,7 @@ var emsgNames = map[EMsg]string{
 	EMsgClientRequestItemAnnouncements: "ClientRequestItemAnnouncements",
 	EMsgClientFriendMsgEchoToSender:    "ClientFriendMsgEchoToSender",
 	EMsgClientPersonaChangeResponse:    "ClientPersonaChangeResponse",
+	EMsgClientWalletInfoUpdate:         "ClientWalletInfoUpdate",
 	EMsgClientUserNotifications:        "ClientUserNotifications",
 	EMsgClientToGC:                     "ClientToGC",
 	EMsgClientFromGC:                   "ClientFromGC",

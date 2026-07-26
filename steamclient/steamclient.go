@@ -52,6 +52,9 @@ type Client struct {
 	// OnItemNotification is called when new inventory items arrive.
 	OnItemNotification func(*ItemNotification)
 
+	// OnWalletInfo is called when the CM pushes a wallet balance update.
+	OnWalletInfo func(*WalletInfo)
+
 	// OnGCMessage is called for incoming Game Coordinator messages.
 	OnGCMessage func(*GCMessage)
 
@@ -65,6 +68,7 @@ type Client struct {
 	done           chan struct{} // closed on Disconnect
 	wg             sync.WaitGroup
 	loggedIn       bool
+	walletInfo     *WalletInfo // last CM wallet push; nil until one arrives
 	closeOnce      sync.Once
 	disconnectOnce sync.Once
 }
@@ -79,6 +83,7 @@ type config struct {
 	onPersonaState      func(*PersonaStateEvent)
 	onTradeNotification func(*TradeNotification)
 	onItemNotification  func(*ItemNotification)
+	onWalletInfo        func(*WalletInfo)
 	onGCMessage         func(*GCMessage)
 	onDisconnect        func(*DisconnectEvent)
 }
@@ -143,6 +148,7 @@ func New(opts ...Option) *Client {
 		OnGCMessage:         cfg.onGCMessage,
 		OnTradeNotification: cfg.onTradeNotification,
 		OnItemNotification:  cfg.onItemNotification,
+		OnWalletInfo:        cfg.onWalletInfo,
 		OnDisconnect:        cfg.onDisconnect,
 	}
 }
@@ -307,6 +313,7 @@ func (c *Client) Disconnect() error {
 		sessionID = c.sessionID
 		c.loggedIn = false
 	}
+	c.walletInfo = nil
 	c.mu.Unlock()
 
 	// Send ClientLogOff best-effort (outside the lock to avoid deadlock
@@ -456,6 +463,9 @@ func (c *Client) handlePacket(pkt *Packet) {
 
 	case EMsgClientItemAnnouncements:
 		c.handleItemAnnouncements(pkt)
+
+	case EMsgClientWalletInfoUpdate:
+		c.handleWalletInfoUpdate(pkt)
 
 	case EMsgClientFromGC:
 		c.handleGCMessage(pkt)

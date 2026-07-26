@@ -30,6 +30,12 @@ func (c *Client) fireDisconnect(evt *DisconnectEvent) {
 	c.disconnectOnce.Do(func() {
 		c.mu.Lock()
 		c.loggedIn = false
+		// The wallet cache is session-scoped: a caller that sees
+		// WalletInfo ok=true must be able to read it as "the CM told me
+		// this during the session I have now", not a figure left over
+		// from a connection that has since dropped. Steam re-pushes on
+		// logon, so the gap is brief.
+		c.walletInfo = nil
 		c.mu.Unlock()
 		if c.OnDisconnect != nil {
 			go c.OnDisconnect(evt)
@@ -57,6 +63,7 @@ func (c *Client) Reconnect(ctx context.Context) error {
 	c.done = make(chan struct{})
 	c.mu.Lock()
 	c.loggedIn = false
+	c.walletInfo = nil
 	c.mu.Unlock()
 
 	// Establish new connection (overwrites c.done, starts new readLoop).
