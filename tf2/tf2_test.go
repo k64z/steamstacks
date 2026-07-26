@@ -493,8 +493,8 @@ func TestCraftResponse(t *testing.T) {
 	// int16le blueprint, uint32le unknown, uint16le id_count, uint64le[] item_ids
 	var body []byte
 	body = binary.LittleEndian.AppendUint16(body, uint16(int16(5))) // recipe 5
-	body = binary.LittleEndian.AppendUint32(body, 0)               // unknown
-	body = binary.LittleEndian.AppendUint16(body, 2)               // 2 items
+	body = binary.LittleEndian.AppendUint32(body, 0)                // unknown
+	body = binary.LittleEndian.AppendUint16(body, 2)                // 2 items
 	body = binary.LittleEndian.AppendUint64(body, 9001)
 	body = binary.LittleEndian.AppendUint64(body, 9002)
 

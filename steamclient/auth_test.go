@@ -16,8 +16,8 @@ type mockConn struct {
 
 func (m *mockConn) Write(_ context.Context, data []byte) error { m.writeCh <- data; return nil }
 func (m *mockConn) Read(_ context.Context) ([]byte, error)     { select {} }
-func (m *mockConn) Close() error                                { return nil }
-func (m *mockConn) RemoteAddr() string                          { return "mock" }
+func (m *mockConn) Close() error                               { return nil }
+func (m *mockConn) RemoteAddr() string                         { return "mock" }
 
 func TestExpectJobIDMatches(t *testing.T) {
 	c := New()

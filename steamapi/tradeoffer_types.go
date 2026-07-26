@@ -78,9 +78,9 @@ type AssetDescription struct {
 	Name           string            `json:"name"`
 	MarketHashName string            `json:"market_hash_name"`
 	Type           string            `json:"type"`
-	Tradable       bool              `json:"tradable"`       // Steam changed wire format from int (0/1) to bool
-	Marketable     bool              `json:"marketable"`     // Steam changed wire format from int (0/1) to bool
-	Commodity      bool              `json:"commodity"`      // Steam changed wire format from int (0/1) to bool
+	Tradable       bool              `json:"tradable"`   // Steam changed wire format from int (0/1) to bool
+	Marketable     bool              `json:"marketable"` // Steam changed wire format from int (0/1) to bool
+	Commodity      bool              `json:"commodity"`  // Steam changed wire format from int (0/1) to bool
 	IconURL        string            `json:"icon_url"`
 	IconURLLarge   string            `json:"icon_url_large,omitzero"`
 	Descriptions   []DescriptionLine `json:"descriptions,omitzero"`

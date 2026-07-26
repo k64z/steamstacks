@@ -139,10 +139,10 @@ func makeFriendsListPacket(t *testing.T, incremental bool, friends []*protocol.C
 func makeFriendMsgIncomingPacket(t *testing.T, emsg EMsg, from uint64, entryType int32, msg string, limited bool, ts uint32) *Packet {
 	t.Helper()
 	body, err := proto.Marshal(&protocol.CMsgClientFriendMsgIncoming{
-		SteamidFrom:          proto.Uint64(from),
-		ChatEntryType:        proto.Int32(entryType),
-		FromLimitedAccount:   proto.Bool(limited),
-		Message:              []byte(msg),
+		SteamidFrom:            proto.Uint64(from),
+		ChatEntryType:          proto.Int32(entryType),
+		FromLimitedAccount:     proto.Bool(limited),
+		Message:                []byte(msg),
 		Rtime32ServerTimestamp: proto.Uint32(ts),
 	})
 	if err != nil {

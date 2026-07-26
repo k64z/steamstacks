@@ -16,15 +16,15 @@ const AppID = 440
 
 // GC message types for the TF2 Game Coordinator.
 const (
-	MsgClientWelcome  = 4004
-	MsgClientHello    = 4006
-	MsgClientGoodbye  = 4008
-	MsgUseItemRequest    = 1025
-	MsgCraft             = 1002
-	MsgCraftResponse     = 1003
-	MsgDelete            = 1004
-	MsgRemoveMakersMark  = 1053
-	MsgRemoveGiftedBy    = 2570
+	MsgClientWelcome    = 4004
+	MsgClientHello      = 4006
+	MsgClientGoodbye    = 4008
+	MsgUseItemRequest   = 1025
+	MsgCraft            = 1002
+	MsgCraftResponse    = 1003
+	MsgDelete           = 1004
+	MsgRemoveMakersMark = 1053
+	MsgRemoveGiftedBy   = 2570
 )
 
 // WelcomeEvent is fired when the TF2 GC accepts our session.

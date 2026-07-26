@@ -315,4 +315,3 @@ func flagToBool(raw json.RawMessage) bool {
 		return s != "" && s != "0"
 	}
 }
-

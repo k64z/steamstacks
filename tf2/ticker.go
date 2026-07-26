@@ -13,7 +13,7 @@ type ticker interface {
 type realTicker struct{ t *time.Ticker }
 
 func (r *realTicker) C() <-chan time.Time { return r.t.C }
-func (r *realTicker) Stop()              { r.t.Stop() }
+func (r *realTicker) Stop()               { r.t.Stop() }
 
 // defaultNewTicker is the production constructor for the hello-resend
 // ticker; tests swap Client.newTicker for a fake.

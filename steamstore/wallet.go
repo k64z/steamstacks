@@ -13,9 +13,9 @@ import (
 
 // WalletBalance represents the user's Steam Wallet balance
 type WalletBalance struct {
-	Balance     string // Formatted balance (e.g., "$10.00")
-	HasWallet   bool
-	Currency    string
+	Balance   string // Formatted balance (e.g., "$10.00")
+	HasWallet bool
+	Currency  string
 }
 
 // RedeemWalletCodeResult represents the result of redeeming a wallet code
@@ -120,14 +120,14 @@ type CreateWalletRequest struct {
 	WalletCode     string
 	CreateFromCode int
 	BillingAddress struct {
-		FirstName   string
-		LastName    string
-		Address     string
-		City        string
-		Country     string
-		State       string
-		PostalCode  string
-		Phone       string
+		FirstName  string
+		LastName   string
+		Address    string
+		City       string
+		Country    string
+		State      string
+		PostalCode string
+		Phone      string
 	}
 }
 

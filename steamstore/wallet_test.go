@@ -46,27 +46,27 @@ func TestParseWalletBalanceNoWallet(t *testing.T) {
 
 func TestParseWalletBalanceVariousFormats(t *testing.T) {
 	tests := []struct {
-		name     string
-		html     string
-		expected string
+		name      string
+		html      string
+		expected  string
 		hasWallet bool
 	}{
 		{
-			name:     "USD format",
-			html:     `<a class="global_action_link" id="header_wallet_balance" href="/account/store_transactions/">$10.00</a>`,
-			expected: "$10.00",
+			name:      "USD format",
+			html:      `<a class="global_action_link" id="header_wallet_balance" href="/account/store_transactions/">$10.00</a>`,
+			expected:  "$10.00",
 			hasWallet: true,
 		},
 		{
-			name:     "EUR format",
-			html:     `<a class="global_action_link" id="header_wallet_balance" href="/account/store_transactions/">10,00€</a>`,
-			expected: "10,00€",
+			name:      "EUR format",
+			html:      `<a class="global_action_link" id="header_wallet_balance" href="/account/store_transactions/">10,00€</a>`,
+			expected:  "10,00€",
 			hasWallet: true,
 		},
 		{
-			name:     "KZT format with spaces",
-			html:     `<a class="global_action_link" id="header_wallet_balance" href="https://store.steampowered.com/account/store_transactions/">48 291,94₸</a>`,
-			expected: "48 291,94₸",
+			name:      "KZT format with spaces",
+			html:      `<a class="global_action_link" id="header_wallet_balance" href="https://store.steampowered.com/account/store_transactions/">48 291,94₸</a>`,
+			expected:  "48 291,94₸",
 			hasWallet: true,
 		},
 	}

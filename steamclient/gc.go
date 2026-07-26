@@ -113,7 +113,7 @@ func encodeGCBinaryPayload(msg *GCMessage) []byte {
 	// Note: unlike proto payloads, binary payloads do NOT include the msgType
 	// in the inner header. The msgType is carried only in CMsgGCClient.Msgtype.
 	buf := make([]byte, 18+len(msg.Body))
-	binary.LittleEndian.PutUint16(buf[0:2], 1) // version
+	binary.LittleEndian.PutUint16(buf[0:2], 1)                    // version
 	binary.LittleEndian.PutUint64(buf[2:10], 0xFFFFFFFFFFFFFFFF)  // targetJob
 	binary.LittleEndian.PutUint64(buf[10:18], 0xFFFFFFFFFFFFFFFF) // sourceJob
 	copy(buf[18:], msg.Body)

@@ -42,10 +42,10 @@ func TestParsePhoneInfoNoPhone(t *testing.T) {
 
 func TestParsePhoneInfoVariousFormats(t *testing.T) {
 	tests := []struct {
-		name        string
-		html        string
-		hasPhone    bool
-		endingWith  string
+		name       string
+		html       string
+		hasPhone   bool
+		endingWith string
 	}{
 		{
 			name: "standard format",

@@ -286,4 +286,3 @@ func decodeAccount(b []byte) (Account, error) {
 
 	return a, nil
 }
-

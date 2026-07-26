@@ -15,13 +15,13 @@ const (
 
 // SO message types from the GC SDK.
 const (
-	MsgSOCreate                    = 21
-	MsgSOUpdate                    = 22
-	MsgSODestroy                   = 23
-	MsgSOCacheSubscribed           = 24
-	MsgSOUpdateMultiple            = 26
-	MsgSOCacheSubscriptionCheck    = 27
-	MsgSOCacheSubscriptionRefresh  = 28
+	MsgSOCreate                   = 21
+	MsgSOUpdate                   = 22
+	MsgSODestroy                  = 23
+	MsgSOCacheSubscribed          = 24
+	MsgSOUpdateMultiple           = 26
+	MsgSOCacheSubscriptionCheck   = 27
+	MsgSOCacheSubscriptionRefresh = 28
 )
 
 // soCache stores the live SO cache state: backpack items and account metadata.

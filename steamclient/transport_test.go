@@ -60,7 +60,7 @@ func TestTCPFramingReadVerifiesMagic(t *testing.T) {
 	// Write a frame with wrong magic
 	go func() {
 		hdr := make([]byte, 8)
-		binary.LittleEndian.PutUint32(hdr[0:4], 4) // payload length
+		binary.LittleEndian.PutUint32(hdr[0:4], 4)          // payload length
 		binary.LittleEndian.PutUint32(hdr[4:8], 0xDEADBEEF) // wrong magic
 		server.Write(hdr)
 		server.Write([]byte("test"))

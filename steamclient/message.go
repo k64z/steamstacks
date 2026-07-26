@@ -70,10 +70,10 @@ func encodeNonProtoPacket(p *Packet) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	binary.Write(buf, binary.LittleEndian, uint32(p.EMsg))
 	buf.WriteByte(headerSize)
-	binary.Write(buf, binary.LittleEndian, uint16(2)) // header version
+	binary.Write(buf, binary.LittleEndian, uint16(2))                  // header version
 	binary.Write(buf, binary.LittleEndian, uint64(0xFFFFFFFFFFFFFFFF)) // target job id
 	binary.Write(buf, binary.LittleEndian, uint64(0xFFFFFFFFFFFFFFFF)) // source job id
-	buf.WriteByte(0xEF) // canary
+	buf.WriteByte(0xEF)                                                // canary
 	binary.Write(buf, binary.LittleEndian, steamID)
 	binary.Write(buf, binary.LittleEndian, sessionID)
 	buf.Write(p.Body)

@@ -16,34 +16,34 @@ import (
 
 // SendTradeOfferOptions contains options for sending a trade offer
 type SendTradeOfferOptions struct {
-	Partner        steamid.SteamID     // Required: trade partner's SteamID
-	Token          string              // Optional: trade token for non-friends
-	Message        string              // Optional: message to include (max 128 chars)
+	Partner        steamid.SteamID       // Required: trade partner's SteamID
+	Token          string                // Optional: trade token for non-friends
+	Message        string                // Optional: message to include (max 128 chars)
 	ItemsToGive    []steamapi.TradeAsset // Items to give
 	ItemsToReceive []steamapi.TradeAsset // Items to receive
 }
 
 // SendTradeOfferResponse contains the response from SendTradeOffer
 type SendTradeOfferResponse struct {
-	TradeOfferID         string `json:"tradeofferid"`
-	NeedsConfirmation    bool   `json:"needs_mobile_confirmation"`
-	NeedsEmailConfirm    bool   `json:"needs_email_confirmation"`
-	EmailDomain          string `json:"email_domain"`
+	TradeOfferID      string `json:"tradeofferid"`
+	NeedsConfirmation bool   `json:"needs_mobile_confirmation"`
+	NeedsEmailConfirm bool   `json:"needs_email_confirmation"`
+	EmailDomain       string `json:"email_domain"`
 }
 
 // AcceptTradeOfferResponse contains the response from AcceptTradeOffer
 type AcceptTradeOfferResponse struct {
-	NeedsConfirmation    bool   `json:"needs_mobile_confirmation"`
-	NeedsEmailConfirm    bool   `json:"needs_email_confirmation"`
-	EmailDomain          string `json:"email_domain"`
+	NeedsConfirmation bool   `json:"needs_mobile_confirmation"`
+	NeedsEmailConfirm bool   `json:"needs_email_confirmation"`
+	EmailDomain       string `json:"email_domain"`
 }
 
 // tradeOfferJSON is the internal format for json_tradeoffer
 type tradeOfferJSON struct {
-	NewVersion bool                 `json:"newversion"`
-	Version    int                  `json:"version"`
-	Me         tradeOfferParty      `json:"me"`
-	Them       tradeOfferParty      `json:"them"`
+	NewVersion bool            `json:"newversion"`
+	Version    int             `json:"version"`
+	Me         tradeOfferParty `json:"me"`
+	Them       tradeOfferParty `json:"them"`
 }
 
 type tradeOfferParty struct {
@@ -167,11 +167,11 @@ func (c *Community) SendTradeOffer(ctx context.Context, opts SendTradeOfferOptio
 	}
 
 	var result struct {
-		TradeOfferID             string `json:"tradeofferid"`
-		NeedsMobileConfirmation  bool   `json:"needs_mobile_confirmation"`
-		NeedsEmailConfirmation   bool   `json:"needs_email_confirmation"`
-		EmailDomain              string `json:"email_domain"`
-		StrError                 string `json:"strError"`
+		TradeOfferID            string `json:"tradeofferid"`
+		NeedsMobileConfirmation bool   `json:"needs_mobile_confirmation"`
+		NeedsEmailConfirmation  bool   `json:"needs_email_confirmation"`
+		EmailDomain             string `json:"email_domain"`
+		StrError                string `json:"strError"`
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
